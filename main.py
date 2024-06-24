@@ -1,31 +1,29 @@
 import argparse
-import os
+import os, sys
 import torch
-from tqdm import tqdm
 import pandas as pd
-from natsort import natsorted
 import torch.optim as optim
-from skimage import io, transform
 import numpy as np
-from PIL import Image
 import matplotlib.pyplot as plt
-from torchvision import transforms, utils, datasets
-import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models.resnet import resnet50
 import cvxpy as cp
+
 from pathlib import Path
 from math import ceil
-import os, sys
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(SCRIPT_DIR))
-
-from dataloader import get_celeba_dataset
+from dataloader import get_celeba_dataset, ColoredMNIST
 from model import Model
 from utils import hsic_inter, hsic_intra
 from hsic import HSICLoss
+from tqdm import tqdm
+from PIL import Image
+from skimage import io, transform
+from torchvision import transforms, utils, datasets
+from torchvision.models.resnet import resnet50, resnet18
+
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(SCRIPT_DIR))
 
 def l2_norm(x):
     return torch.nn.functional.normalize(x, p=2.0, dim=1, eps=1e-12, out=None)
@@ -40,18 +38,31 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=16, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=1, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--gamma', default=3, type=int, help='Regularization Coefficient (3 in original impl)')
+    parser.add_argument('--dataset', dest='dataset', default='cifar10', type=str, help='dataset (options: cmnist, celeba, cifar10)')    
+    parser.add_argument("--data", help='path for loading data', default='data', type=str)
+    parser.add_argument("--percent", help="percentage of conflict", default= "1pct", type=str)
+    parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
+
     args = parser.parse_args()
 
-    # load dataset
-    celeba = get_celeba_dataset()
-    train_size = ceil(0.70 * len(celeba))
-    val_size = ceil(0.10 * len(celeba))
-    test_size = len(celeba) - (train_size+val_size)
-    train, test_dataset = torch.utils.data.random_split(celeba, [train_size+val_size, test_size])
-    train_dataset, val_dataset = torch.utils.data.random_split(train, [train_size, val_size])
+    if args.dataset == "celeba":
+        # load dataset
+        dataset = get_celeba_dataset()
+        train_size = ceil(0.70 * len(dataset))
+        val_size = ceil(0.10 * len(dataset))
+        test_size = len(dataset) - (train_size+val_size)
+        train, test_dataset = torch.utils.data.random_split(dataset, [train_size+val_size, test_size])
+        train_dataset, val_dataset = torch.utils.data.random_split(train, [train_size, val_size])
+    elif args.dataset == "cmnist": 
+        dataset = ColoredMNIST(root='data', env='train')
+        train_size = ceil(0.80 * len(dataset))
+        val_size = ceil(0.20 * len(dataset))
+        train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+        test_dataset = ColoredMNIST(root='data', env='test')
+
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=2*args.batch_size, shuffle=False)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=2*args.batch_size, shuffle=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     # load model
     model = Model(feature_dim=args.feature_dim).to(device)
