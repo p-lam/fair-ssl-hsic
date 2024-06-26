@@ -27,13 +27,13 @@ DATA_ROOT = os.environ["DATA_ROOT"]
 CelebA helpers
 """
 train_transform = t.Compose([
-    t.RandomResizedCrop(64),
-    t.RandomHorizontalFlip(p=0.5),
-    t.RandomApply([t.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-    t.RandomGrayscale(p=0.2)])
+                    t.RandomResizedCrop(64),
+                    t.RandomHorizontalFlip(p=0.5),
+                    t.RandomApply([t.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                    t.RandomGrayscale(p=0.2)])
 
-trans = t.Compose([t.ToTensor(),
-                       t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+trans = t.Compose([ t.ToTensor(),
+                    t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
 class CelebADataset(Dataset):
     def __init__(self, root_dir, csv_file, transform=trans):
@@ -138,6 +138,12 @@ class ColoredMNIST(datasets.VisionDataset):
 
     def __init__(self, root='data', env='train', transform=None, target_transform=None):
         super(ColoredMNIST, self).__init__(root, transform=transform, target_transform=target_transform)
+        self.transform = trans
+        self.train_transform =  t.Compose([
+                                t.RandomCrop(24),
+                                t.RandomHorizontalFlip(p=0.5),
+                                t.ToTensor(),
+                                ])
         self.prepare_colored_mnist()
         if env in ['train','test']:
             self.data_label_tuples = torch.load(os.path.join(self.root, 'ColoredMNIST', env) + '.pt')
@@ -147,12 +153,9 @@ class ColoredMNIST(datasets.VisionDataset):
     def __getitem__(self, index):
         # load the data
         img, label, color = self.data_label_tuples[index]
-        pos_1 = train_transform(img)
-        pos_2 = train_transform(img)
-        # apply transformations to the image
-        pos_1 = self.transform(pos_1) 
-        pos_2 = self.transform(pos_2) 
-
+        # transform the images
+        pos_1 = self.train_transform(img)
+        pos_2 = self.train_transform(img)
         return pos_1, pos_2, label, color, index 
 
     def __len__(self):
