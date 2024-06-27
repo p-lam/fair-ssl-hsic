@@ -151,26 +151,26 @@ def mmd_pxpy_pxy(x,y,sigma=None,use_cuda=True, to_numpy=False):
     mmd_pxpy_pxy_val = A - 2*B + C 
     return mmd_pxpy_pxy_val
 
-def hsic_regular(x, y, sigma=None, use_cuda=True, to_numpy=False):
+def hsic_regular(x, y, sigma=None, use_cuda=True, to_numpy=False, k_type_y='gaussian'):
     """
     """
     Kxc = kernelmat(x, sigma)
-    Kyc = kernelmat(y, sigma)
+    Kyc = kernelmat(y, sigma, k_type=k_type_y)
     KtK = torch.mul(Kxc, Kyc.t())
     Pxy = torch.mean(KtK)
     return Pxy
 
-def hsic_normalized(x, y, sigma=None, use_cuda=True, to_numpy=True):
+def hsic_normalized(x, y, sigma=None, use_cuda=True, to_numpy=True, k_type_y='linear'):
     """
     """
     m = int(x.size()[0])
-    Pxy = hsic_regular(x, y, sigma, use_cuda)
+    Pxy = hsic_regular(x, y, sigma, use_cuda, k_type_y=k_type_y)
     Px = torch.sqrt(hsic_regular(x, x, sigma, use_cuda))
-    Py = torch.sqrt(hsic_regular(y, y, sigma, use_cuda))
+    Py = torch.sqrt(hsic_regular(y, y, sigma, use_cuda, k_type_y=k_type_y))
     thehsic = Pxy/(Px*Py)
     return thehsic
 
-def hsic_normalized_cca(x, y, sigma, use_cuda=True, to_numpy=True, k_type_y='gaussian'):
+def hsic_normalized_cca(x, y, sigma=None, use_cuda=True, to_numpy=True, k_type_y='gaussian'):
     """
     """
     m = int(x.size()[0])

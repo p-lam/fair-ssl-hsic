@@ -21,7 +21,7 @@ device = 'cuda' if torch.cuda.is_available()==True else 'cpu'
 device = torch.device(device)
 
 # point $DATA_ROOT to location of CelebA folder
-DATA_ROOT = os.environ["DATA_ROOT"]
+# DATA_ROOT = os.environ["DATA_ROOT"]
 
 """
 CelebA helpers

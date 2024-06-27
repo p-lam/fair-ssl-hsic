@@ -4,7 +4,6 @@ import torch
 import yaml
 import numpy as np 
 import matplotlib.pyplot as plt
-import cv2 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

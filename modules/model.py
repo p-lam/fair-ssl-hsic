@@ -15,11 +15,11 @@ class SSL_HSIC(nn.Module):
     def l2_norm(self, x):
         return torch.nn.functional.normalize(x, p=2.0, dim=1, eps=1e-12, out=None)
 
-    def approximate_hsic_zy(self, hidden, h_target, k_type_y='gaussian'):
-        return hsic_normalized_cca(hidden, h_target, sigma=self.args.sigma, k_type_y=k_type_y)
+    def approximate_hsic_zy(self, hidden, h_target, k_type_y='linear'):
+        return hsic_regular(hidden, h_target, k_type_y=k_type_y)
 
     def approximate_hsic_zz(self, z1, z2):
-        return hsic_normalized_cca(z1, z2, sigma=self.args.sigma)
+        return hsic_regular(z1, z2)
 
     def hsic_objective(self, z1, z2, idx, N):
         target = F.one_hot(idx, num_classes=N)
