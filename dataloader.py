@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torchvision as tv
 import random
+import matplotlib.gridspec as gridspec
 
 from tqdm import tqdm
 from natsort import natsorted
@@ -21,22 +22,13 @@ device = 'cuda' if torch.cuda.is_available()==True else 'cpu'
 device = torch.device(device)
 
 # point $DATA_ROOT to location of CelebA folder
-# DATA_ROOT = os.environ["DATA_ROOT"]
+DATA_ROOT = os.environ["DATA_ROOT"]
 
 """
-CelebA helpers
+CelebA wrapper
 """
-train_transform = t.Compose([
-                    t.RandomResizedCrop(64),
-                    t.RandomHorizontalFlip(p=0.5),
-                    t.RandomApply([t.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-                    t.RandomGrayscale(p=0.2)])
-
-trans = t.Compose([ t.ToTensor(),
-                    t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
 class CelebADataset(Dataset):
-    def __init__(self, root_dir, csv_file, transform=trans):
+    def __init__(self, root_dir, csv_file):
         """
         Args:
         root_dir (string): Directory with all the images
@@ -45,7 +37,13 @@ class CelebADataset(Dataset):
         # Read names of images in the root directory
         self.root_dir = root_dir
         self.img_dir = root_dir / "img_align_celeba" / "img_align_celeba"
-        self.transform = trans
+        self.transform = t.Compose([t.ToTensor(),
+                                    t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        self.train_transform = t.Compose([
+                                t.RandomResizedCrop(64),
+                                t.RandomHorizontalFlip(p=0.5),
+                                t.RandomApply([t.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+                                t.RandomGrayscale(p=0.2)])
         image_names = os.listdir(self.img_dir)
         self.image_names = natsorted(image_names)
         self.label = pd.read_csv(csv_file)
@@ -59,8 +57,8 @@ class CelebADataset(Dataset):
         # Load image and convert it to RGB
         img = Image.open(img_path).convert('RGB')
         img = img.resize((64, 64))
-        pos_1 = train_transform(img)
-        pos_2 = train_transform(img)
+        pos_1 = self.train_transform(img)
+        pos_2 = self.train_transform(img)
         label = np.array(self.label.iloc[idx][1:])[20]  # male
         sen_attr = np.array(self.label.iloc[idx][1:])[-1]  # young
         # Apply transformations to the image
@@ -70,10 +68,10 @@ class CelebADataset(Dataset):
 
         return pos_1, pos_2, label, sen_attr, idx
 
-def get_celeba_dataset(transform=train_transform):
+def get_celeba_dataset():
     root = Path(DATA_ROOT)/"KaggleCeleb"
     anno_path = root / "list_attr_celeba.csv"
-    dataset = CelebADataset(root, anno_path, transform=transform)
+    dataset = CelebADataset(root, anno_path)
     return dataset
 
 """
@@ -93,34 +91,32 @@ def color_grayscale_arr(arr, red=True):
     
     return arr
 
-def multicolor_grayscale_arr(img):
+def multicolor_grayscale_arr(img, target=None):
     """Code referenced from https://github.com/NeurAI-Lab/InBiaseD/blob/main/data/data_wrapper.py"""
-    # if self.train:
-    #     fg_color = ColoredMNIST.COLORS[target]
     dtype = img.dtype
-    rand_target = random.randint(0,9)
-    fg_color = ColoredMNIST.COLORS[rand_target]
+    # color grayscale img based on label 
+    if target is not None:
+        fg_color = ColoredMNIST.COLORS[target]
+    else: # random color 
+        rand_target = random.randint(0,9)
+        fg_color = ColoredMNIST.COLORS[rand_target]
     img = torch.Tensor(img)
     color_img = img.unsqueeze(dim=-1).repeat(1, 1, 3).float()
     img[img < 75] = 0.0
-    # img[img >= 75] = 255.0
-    # color_img /= 255.0
+    img[img >= 75] = 255.0
+    color_img /= 255.0
     color_img[img != 0] = ColoredMNIST.CHMAP[fg_color]
     color_img[img == 0] *= torch.tensor([0, 0, 0])
 
-    return (color_img.numpy()).astype(dtype)
+    if target is not None:
+        return (color_img.numpy()).astype(dtype)
+    else:
+        return (color_img.numpy()).astype(dtype), rand_target
 
 class ColoredMNIST(datasets.VisionDataset):
     """
-    Colored MNIST dataset for testing IRM. Prepared using procedure from https://arxiv.org/pdf/1907.02893.pdf
-
-    Args:
-    root (string): Root directory of dataset where ``ColoredMNIST/*.pt`` will exist.
-    env (string): Which environment to load. Must be 1 of 'train', 'test', or 'all_train'.
-    transform (callable, optional): A function/transform that  takes in an PIL image
-        and returns a transformed version. E.g, ``transforms.RandomCrop``
-    target_transform (callable, optional): A function/transform that takes in the
-        target and transforms it.
+    ColoredMNIST wrapper
+    Modified from https://arxiv.org/pdf/1907.02893.pdf
     """
     COLORS = ['red', 'orange', 'yellow', 'greenyellow', 'green', 'cyan', 'blue', 'purple', 'pink', 'magenta']
     CHMAP = {
@@ -135,16 +131,22 @@ class ColoredMNIST(datasets.VisionDataset):
         "pink": (torch.tensor([219.0, 11.0, 117.0])),
         "magenta": (torch.tensor([255.0, 0, 255.0]))
     }
+    
 
-    def __init__(self, root='data', env='train', transform=None, target_transform=None):
+    def __init__(self, root='data', env='train', transform=None, target_transform=None, binary=False):
         super(ColoredMNIST, self).__init__(root, transform=transform, target_transform=target_transform)
-        self.transform = trans
-        self.train_transform =  t.Compose([
-                                t.RandomCrop(24),
-                                t.RandomHorizontalFlip(p=0.5),
-                                t.ToTensor(),
-                                ])
-        self.prepare_colored_mnist()
+        self.prepare_colored_mnist(binary=binary)
+        target_transform = t.Compose([  t.ToTensor(),
+                                        t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+    
+        train_transform =  t.Compose([  t.RandomCrop(24),
+                                        t.RandomRotation(10), 
+                                        t.ToTensor(),
+                                        t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                                        ])
+        self.transform = train_transform if env == "train" else target_transform 
+        
         if env in ['train','test']:
             self.data_label_tuples = torch.load(os.path.join(self.root, 'ColoredMNIST', env) + '.pt')
         else:
@@ -153,15 +155,17 @@ class ColoredMNIST(datasets.VisionDataset):
     def __getitem__(self, index):
         # load the data
         img, label, color = self.data_label_tuples[index]
-        # transform the images
-        pos_1 = self.train_transform(img)
-        pos_2 = self.train_transform(img)
-        return pos_1, pos_2, label, color, index 
+        # for printing, comment this and uncomment below for training
+        return img, label, color
+        ## transform the images
+        # pos_1 = self.transform(img)
+        # pos_2 = self.transform(img)
+        # return pos_1, pos_2, label, color, index 
 
     def __len__(self):
         return len(self.data_label_tuples)
 
-    def prepare_colored_mnist(self):
+    def prepare_colored_mnist(self, binary=False):
         colored_mnist_dir = os.path.join(self.root, 'ColoredMNIST')
         if os.path.exists(os.path.join(colored_mnist_dir, 'train.pt')) \
             and os.path.exists(os.path.join(colored_mnist_dir, 'test.pt')):
@@ -170,35 +174,46 @@ class ColoredMNIST(datasets.VisionDataset):
         print('Preparing Colored MNIST')
         train_mnist = datasets.mnist.MNIST(self.root, train=True, download=True)
         train_set, test_set = [], []
-        for idx, (im, label) in enumerate(train_mnist):
-            if idx % 10000 == 0:
-                print(f'Converting image {idx}/{len(train_mnist)}')
-            im_array = np.array(im)
 
-            # Assign a binary label y to the image based on the digit
-            binary_label = 0 if label < 5 else 1
+        if binary:
+            for idx, (im, label) in enumerate(train_mnist):
+                if idx % 10000 == 0:
+                    print(f'Converting image {idx}/{len(train_mnist)}')
+                im_array = np.array(im)
 
-            # Flip label with 25% probability
-            if np.random.uniform() < 0.25:
-                binary_label = binary_label ^ 1
+                # Assign a binary label y to the image based on the digit
+                binary_label = 0 if label < 5 else 1
 
-            # Color the image either red or green according to its possibly flipped label
-            color_red = binary_label == 0
+                # Flip label with 25% probability
+                if np.random.uniform() < 0.25:
+                    binary_label = binary_label ^ 1
 
-            # Flip the color with a probability
-            if idx < 40000:
-                if np.random.uniform() < 0.2:
-                    color_red = not color_red
-            else: # this isn't used
-                if np.random.uniform() < 0.9:
-                    color_red = not color_red
+                # Color the image either red or green according to its possibly flipped label
+                color_red = binary_label == 0
 
-            if idx < 40000:
-                colored_arr = color_grayscale_arr(im_array, red=color_red)
-                train_set.append([Image.fromarray(colored_arr), label, int(color_red)])
-            else:
-                colored_arr = multicolor_grayscale_arr(im_array)
-                test_set.append([Image.fromarray(colored_arr), label, int(color_red)])
+                # Flip the color with a probability
+                if idx < 40000:
+                    if np.random.uniform() < 0.2:
+                        color_red = not color_red
+                else: # this isn't used
+                    if np.random.uniform() < 0.9:
+                        color_red = not color_red
+
+                if idx < 40000:
+                    colored_arr = color_grayscale_arr(im_array, red=color_red)
+                    train_set.append([Image.fromarray(colored_arr), label, int(color_red)])
+                else:
+                    colored_arr = multicolor_grayscale_arr(im_array)
+                    test_set.append([Image.fromarray(colored_arr), label, int(color_red)])
+        else: 
+            for idx, (im, label) in enumerate(train_mnist):
+                im_array = np.array(im)
+                if idx < 40000: 
+                    colored_arr = multicolor_grayscale_arr(im_array, target=label)
+                    train_set.append([Image.fromarray(colored_arr), label, label])
+                else: 
+                    colored_arr, rand_targets = multicolor_grayscale_arr(im_array, target=None)
+                    test_set.append([Image.fromarray(colored_arr), label, rand_targets])
 
         # save new data
         os.makedirs(colored_mnist_dir)
@@ -206,23 +221,30 @@ class ColoredMNIST(datasets.VisionDataset):
         torch.save(test_set, os.path.join(colored_mnist_dir, 'test.pt'))
 
 def plot_dataset_digits(dataset, train=True):
-    fig = plt.figure(figsize=(13, 8))
-    columns = 6
-    rows = 3
-    ax = []
-
-    for i in range(columns * rows):
+    label_to_images = {i: [] for i in range(10)}  # Dictionary to store images by label
+    columns = 10 
+    rows = 3 if train else 1 
+    fig, axes = plt.subplots(rows, columns, figsize=(columns,rows), gridspec_kw = {'wspace':0.05, 'hspace':0.05})  # 3 rows and 6 columns
+    for i in range(len(dataset)):
         img, label, color = dataset[i]
-        # create subplot and append to ax
-        ax.append(fig.add_subplot(rows, columns, i + 1))
-        if train:
-            ax[-1].set_title("Label: " + str(label) + ", Color: " + str(color))  # set title
-        else: 
-            ax[-1].set_title("Label: " + str(label))
-        plt.imshow(img)
+        if label in label_to_images and len(label_to_images[label]) < 3:  # Ensure 3 images per label
+            label_to_images[label].append((img, label, color))
+        if all(len(images) == rows for images in label_to_images.values()):
+            break  # Stop if we have 3 images for each label
+        # Plot images
+    for col in range(columns):
+        for row in range(rows):
+            img, label, color = label_to_images[col][row]
+            ax = axes[row, col] if rows == 3 else axes[col]
+            ax.imshow(img, cmap='gray')  # Use cmap='gray' for MNIST images
+            ax.axis('off')
+            if row == 0:  # Only set title for the top row
+                ax.set_title(f"Label: {label}")
 
-    plt.show()  # finally, render the plot
-  
+    name = "mnist_train" if train else "mnist_test"
+    plt.savefig(name, bbox_inches="tight")
+    plt.show()
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Dataloader Test')
     parser.add_argument('--feature_dim', default=128, type=int, help='Feature dim for latent vector')
@@ -244,5 +266,7 @@ if __name__ == '__main__':
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=2*args.batch_size, shuffle=False)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=2*args.batch_size, shuffle=False)
     else: 
-        train_set = ColoredMNIST(root='data', env='test')
-        plot_dataset_digits(train_set, train=False)
+        train_set = ColoredMNIST(root='data', env='train', binary=False)
+        test_set = ColoredMNIST(root='data', env='test', binary=False)
+        # plot_dataset_digits(train_set, train=True)
+        plot_dataset_digits(test_set, train=False)
