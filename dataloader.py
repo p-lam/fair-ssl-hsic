@@ -25,11 +25,13 @@ device = torch.device(device)
 DATA_ROOT = os.environ["DATA_ROOT"]
 
 """
-CelebA wrapper
+CelebA helpers
 """
 class CelebADataset(Dataset):
-    def __init__(self, root_dir, csv_file):
+    def __init__(self, root_dir, csv_file, n_views=1, train=True):
         """
+        CelebA wrapper
+
         Args:
         root_dir (string): Directory with all the images
         transform (callable, optional): transform to be applied to each image sample
@@ -37,7 +39,7 @@ class CelebADataset(Dataset):
         # Read names of images in the root directory
         self.root_dir = root_dir
         self.img_dir = root_dir / "img_align_celeba" / "img_align_celeba"
-        self.transform = t.Compose([t.ToTensor(),
+        self.test_transform = t.Compose([t.ToTensor(),
                                     t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         self.train_transform = t.Compose([
                                 t.RandomResizedCrop(64),
@@ -45,8 +47,17 @@ class CelebADataset(Dataset):
                                 t.RandomApply([t.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
                                 t.RandomGrayscale(p=0.2)])
         image_names = os.listdir(self.img_dir)
+        self.n_views = n_views
         self.image_names = natsorted(image_names)
         self.label = pd.read_csv(csv_file)
+        self.train = train
+    
+    def set_transform_mode(self, train=None):
+        if train is None:
+            train = self.train
+        self.transform = self.train_transform if train else self.test_transform
+        if not train:
+            self.n_views = 1
 
     def __len__(self): 
         return len(self.image_names)
@@ -57,21 +68,18 @@ class CelebADataset(Dataset):
         # Load image and convert it to RGB
         img = Image.open(img_path).convert('RGB')
         img = img.resize((64, 64))
-        pos_1 = self.train_transform(img)
-        pos_2 = self.train_transform(img)
+        # Apply transformations to the image
+        imgs = [self.transform(img) for _ in range(self.n_views)]
+        if self.n_views == 1:
+            imgs = imgs[0]
         label = np.array(self.label.iloc[idx][1:])[20]  # male
         sen_attr = np.array(self.label.iloc[idx][1:])[-1]  # young
-        # Apply transformations to the image
-        # img = self.transform(img)
-        pos_1 = self.transform(pos_1)
-        pos_2 = self.transform(pos_2)
+        return imgs, label, sen_attr, idx
 
-        return pos_1, pos_2, label, sen_attr, idx
-
-def get_celeba_dataset():
+def get_celeba_dataset(n_views=1):
     root = Path(DATA_ROOT)/"KaggleCeleb"
     anno_path = root / "list_attr_celeba.csv"
-    dataset = CelebADataset(root, anno_path)
+    dataset = CelebADataset(root, anno_path, n_views=n_views)
     return dataset
 
 """
@@ -116,6 +124,7 @@ def multicolor_grayscale_arr(img, target=None):
 class ColoredMNIST(datasets.VisionDataset):
     """
     ColoredMNIST wrapper
+    Training set has fixed colors per digit, test set has randomized colors.
     Modified from https://arxiv.org/pdf/1907.02893.pdf
     """
     COLORS = ['red', 'orange', 'yellow', 'greenyellow', 'green', 'cyan', 'blue', 'purple', 'pink', 'magenta']
@@ -133,10 +142,10 @@ class ColoredMNIST(datasets.VisionDataset):
     }
     
 
-    def __init__(self, root='data', env='train', transform=None, target_transform=None, binary=False):
-        super(ColoredMNIST, self).__init__(root, transform=transform, target_transform=target_transform)
+    def __init__(self, root='data', env='train', binary=False, n_views=2):
+        super(ColoredMNIST, self).__init__(root,)
         self.prepare_colored_mnist(binary=binary)
-        target_transform = t.Compose([  t.ToTensor(),
+        test_transform = t.Compose([  t.ToTensor(),
                                         t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
     
@@ -145,7 +154,8 @@ class ColoredMNIST(datasets.VisionDataset):
                                         t.ToTensor(),
                                         t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                                         ])
-        self.transform = train_transform if env == "train" else target_transform 
+        self.transform = train_transform if env == "train" else test_transform 
+        self.n_views = n_views
         
         if env in ['train','test']:
             self.data_label_tuples = torch.load(os.path.join(self.root, 'ColoredMNIST', env) + '.pt')
@@ -155,12 +165,10 @@ class ColoredMNIST(datasets.VisionDataset):
     def __getitem__(self, index):
         # load the data
         img, label, color = self.data_label_tuples[index]
-        # for printing, comment this and uncomment below for training
-        return img, label, color
-        ## transform the images
-        # pos_1 = self.transform(img)
-        # pos_2 = self.transform(img)
-        # return pos_1, pos_2, label, color, index 
+        imgs = [self.transform(img) for _ in range(self.n_views)]
+        if self.n_views == 1:
+            imgs = imgs[0]
+        return imgs, label, color, index 
 
     def __len__(self):
         return len(self.data_label_tuples)
@@ -220,18 +228,40 @@ class ColoredMNIST(datasets.VisionDataset):
         torch.save(train_set, os.path.join(colored_mnist_dir, 'train.pt'))
         torch.save(test_set, os.path.join(colored_mnist_dir, 'test.pt'))
 
+class ColoredMNISTVanilla(ColoredMNIST):
+    """
+    ColoredMNIST wrapper that outputs images instead of pairs
+    """
+    def __init__(self, root='data', env='train', binary=False):
+        super(ColoredMNISTVanilla, self).__init__(root, env=env, binary=binary)
+        if env in ['train','test']:
+            self.data_label_tuples = torch.load(os.path.join(self.root, 'ColoredMNIST', env) + '.pt')
+        else:
+            raise RuntimeError(f'{env} env unknown. Valid envs are train, test')
+
+    def __getitem__(self, index):
+        # load the data
+        img, label, color = self.data_label_tuples[index]
+        img = self.transform(img)
+        # for printing, comment this and uncomment below for training
+        return img, label, color
+
 def plot_dataset_digits(dataset, train=True):
-    label_to_images = {i: [] for i in range(10)}  # Dictionary to store images by label
+    """
+    Plot colored mnist (train or test), with three lines of digits for the training set and one for the test set
+    """
+    label_to_images = {i: [] for i in range(10)}  # dictionary to store images by label
     columns = 10 
     rows = 3 if train else 1 
-    fig, axes = plt.subplots(rows, columns, figsize=(columns,rows), gridspec_kw = {'wspace':0.05, 'hspace':0.05})  # 3 rows and 6 columns
+    fig, axes = plt.subplots(rows, columns, figsize=(columns,rows), gridspec_kw = {'wspace':0.05, 'hspace':0.05}) 
+    # iterate through dataset 
     for i in range(len(dataset)):
         img, label, color = dataset[i]
-        if label in label_to_images and len(label_to_images[label]) < 3:  # Ensure 3 images per label
+        if label in label_to_images and len(label_to_images[label]) < 3:  # ensure 3 images per label
             label_to_images[label].append((img, label, color))
         if all(len(images) == rows for images in label_to_images.values()):
-            break  # Stop if we have 3 images for each label
-        # Plot images
+            break  # stop if we have 3 images for each label
+    # Plot images
     for col in range(columns):
         for row in range(rows):
             img, label, color = label_to_images[col][row]
@@ -253,7 +283,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', default=500, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--dataset', dest='dataset', default='cifar10', type=str, help='dataset (options: cmnist, celeba, cifar10)')    
 
-    # args parse
+    # test if dataset code is working / plot datasets
     args = parser.parse_args()
     if args.dataset == "celeba":
         celeba = get_celeba_dataset()
@@ -266,7 +296,7 @@ if __name__ == '__main__':
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=2*args.batch_size, shuffle=False)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=2*args.batch_size, shuffle=False)
     else: 
-        train_set = ColoredMNIST(root='data', env='train', binary=False)
-        test_set = ColoredMNIST(root='data', env='test', binary=False)
-        # plot_dataset_digits(train_set, train=True)
+        train_set = ColoredMNISTVanilla(root='data', env='train', binary=False)
+        test_set = ColoredMNISTVanilla(root='data', env='test', binary=False)
+        plot_dataset_digits(train_set)
         plot_dataset_digits(test_set, train=False)

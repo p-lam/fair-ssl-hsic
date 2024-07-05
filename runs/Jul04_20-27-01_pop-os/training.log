@@ -1,0 +1,8 @@
+INFO:root:Start SimCLR training for 5 epochs.
+DEBUG:root:Epoch: 0	Loss: 0.8638515472412109	Top1 accuracy: 80.859375
+DEBUG:root:Epoch: 1	Loss: 0.6296290755271912	Top1 accuracy: 85.9375
+DEBUG:root:Epoch: 2	Loss: 0.6257653832435608	Top1 accuracy: 87.890625
+DEBUG:root:Epoch: 3	Loss: 0.47048380970954895	Top1 accuracy: 92.1875
+DEBUG:root:Epoch: 4	Loss: 0.47140347957611084	Top1 accuracy: 89.0625
+INFO:root:Training has finished.
+INFO:root:Model checkpoint and metadata has been saved at runs/Jul04_20-27-01_pop-os.
