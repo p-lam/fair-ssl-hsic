@@ -3,3 +3,4 @@ figs/*
 __pycache__
 .vscode/*
 results/*
+wandb/*
