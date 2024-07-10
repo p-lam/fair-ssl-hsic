@@ -145,12 +145,12 @@ class ColoredMNIST(datasets.VisionDataset):
     def __init__(self, root='data', env='train', binary=False, n_views=2):
         super(ColoredMNIST, self).__init__(root,)
         self.prepare_colored_mnist(binary=binary)
-        test_transform = t.Compose([  t.ToTensor(),
+        test_transform = t.Compose([    t.ToTensor(),
                                         t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
     
-        train_transform =  t.Compose([  t.RandomCrop(24),
-                                        t.RandomRotation(10), 
+        train_transform =  t.Compose([  t.RandomResizedCrop(size=28, scale=(0.8, 1.)),
+                                        t.RandomRotation(15),
                                         t.ToTensor(),
                                         t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                                         ])

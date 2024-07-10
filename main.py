@@ -16,14 +16,19 @@ from math import ceil
 from dataloader import get_celeba_dataset, ColoredMNIST
 from tqdm import tqdm
 from utils import *
-from modules.model import SSL_HSIC, Fair_SSL_HSIC
+from modules.model import SSL_HSIC, Fair_SSL_HSIC, Model
 from simclr.simclr import SimCLR
-from simclr.resnet_simclr import ResNetSimCLR
+from torch.cuda.amp import GradScaler, autocast
+# from simclr.resnet_simclr import ResNetSimCLR
 from sklearn.linear_model import LogisticRegression
 
 # locating dataset folder(s)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
+
+models = {"simclr": SimCLR, 
+          "ssl-hsic": SSL_HSIC, 
+          "fair-ssl-hsic": Fair_SSL_HSIC}
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Fair SSL-HSIC')
@@ -32,16 +37,16 @@ def parse_args():
     parser.add_argument("--data", help='path for loading data', default='data', type=str)
     # model arguments
     parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
-    parser.add_argument('--model', default='ssl-hsic', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic'])
+    parser.add_argument('--model', default='ssl-hsic', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic', 'supervised'])
     parser.add_argument('-a', '--arch', default='resnet18', help='resnet architecture')
     # training args/hyperparameters
-    parser.add_argument('--lr', '--learning-rate', default=3.0, type=float, metavar='LR', help='initial learning rate', dest='lr')
+    parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float, metavar='LR', help='initial learning rate', dest='lr')
     parser.add_argument('--wd', default=1e-4, type=float, metavar='W', help='weight decay')
     parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
     parser.add_argument('--schedule', default=[600, 900], nargs='*', type=int, help='learning rate schedule (when to drop lr by 10x); does not take effect if --cos is on')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
-    parser.add_argument('--epochs', default=5, type=int, help='Number of sweeps over the dataset to train')
+    parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--start_epoch', default=1, type=int, help='Starting epoch')
     parser.add_argument('--lambda', default=1, type=int, help='Regularization Coefficient')
     parser.add_argument('--gamma', default=3, type=int, help='Regularization Coefficient')
@@ -52,23 +57,22 @@ def parse_args():
     parser.add_argument('--bn_splits', default=8, type=int, help='simulate multi-gpu behavior of BatchNorm in one gpu; 1 is SyncBatchNorm in multi-gpu')
     parser.add_argument('--results-dir', default='./results', type=str, metavar='PATH', help='path to cache (default: none)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')   
-    parser.add_argument('--log_every_n_steps', default=1, type=int) 
+    parser.add_argument('--log_every_n_steps', default=5, type=int) 
     parser.add_argument('--fp16_precision', action='store_true') 
     parser.add_argument('--device', default="cuda" if torch.cuda.is_available() else "cpu", type=str) 
     parser.add_argument("--wandb_name", default="train_1")
     # parse and return args
     args = parser.parse_args()
+
     return args
 
 def main():
     args = parse_args()
-    device = 'cuda' if torch.cuda.is_available()==True else 'cpu'
-    device = torch.device(device)
+    args.device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
     print(f"Saving to wandb under run name: {args.wandb_name}")
-    
     wandb.init(
         project="SSL-HSIC",
         name=f"{args.wandb_name}" if args.wandb_name is not None else None,
@@ -89,144 +93,117 @@ def main():
         val_dataset.dataset.set_transform_mode(train=False)
         test_dataset.dataset.set_transform_mode(train=False)
     elif args.dataset == "cmnist": 
-        dataset_type = ColoredMNIST # if args.model in ['ssl-hsic', "simclr"] else ColoredMNISTVanilla
+        dataset_type = ColoredMNIST 
         train_dataset = dataset_type(root='data', env='train', n_views=args.n_views)
-        # dataset_len = len(dataset)
-        # train_size = ceil(0.80 * len(dataset))
-        # val_size = ceil(0.20 * len(dataset))
-        # train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-        test_dataset = dataset_type(root='data', env='test') 
+        test_dataset = dataset_type(root='data', env='test', n_views=1) 
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-    # val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
+    if args.dataset != "cmnist":
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) 
+    else:
+        print("Validation set not implemented!")
 
     # load model
-    if args.model == 'ssl-hsic':
-        model = SSL_HSIC(args, dim=args.feature_dim, arch=args.arch, bn_splits=args.bn_splits).to(device)
-    elif args.model == 'simclr':
-        model = ResNetSimCLR(base_model=args.arch, out_dim = 512)
-    else:
-        print(f"Model {args.model} not implemented!")
+    model = Model().to(args.device)
 
     # define optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd, momentum=0.9)
-    
-    if args.model == 'simclr':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR( optimizer, T_max=len(train_loader), eta_min=0,
-                                                                last_epoch=-1)
-        simclr = SimCLR(model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-        simclr.train(train_loader)
-    else:
-        # load model if resume
-        if args.resume != '':
-            checkpoint = torch.load(args.resume)
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            args.start_epoch = checkpoint['epoch'] + 1
-            print('Loaded from: {}'.format(args.resume))
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd, momentum=0.9)    
+    # define cosine scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR( optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
+    # define loss criterion
+    criterion = torch.nn.CrossEntropyLoss().to(args.device)
 
-        # logging
-        results = {'train_loss': [], 'test_acc@1': []}
-        if not os.path.exists(args.results_dir):
-            os.mkdir(args.results_dir)
-        # dump args
-        with open(args.results_dir + '/args.json', 'w') as fid:
-            json.dump(args.__dict__, fid, indent=2)
-            # training loop
-        for epoch in range(args.start_epoch, args.epochs + 1):
-            train_loss = train(model, train_loader, optimizer, device, epoch, len(train_dataset), args)
-            results['train_loss'].append(train_loss)
-            test_acc_1 = test(model, train_loader, test_loader, epoch, device, len(test_dataset), args)
-            results['test_acc@1'].append(test_acc_1)
-            # save statistics
-            data_frame = pd.DataFrame(data=results, index=range(args.start_epoch, epoch+1))
-            data_frame.to_csv(args.results_dir + '/log.csv', index_label='epoch')
+    # load model if needed 
+    if args.resume != '':
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        args.start_epoch = checkpoint['epoch'] + 1
+        print('Loaded from: {}'.format(args.resume))
+
+    # logging
+    if not os.path.exists(args.results_dir):
+        os.mkdir(args.results_dir)
+
+    # training loop (TODO: clean up)
+    if args.model != "supervised":
+        net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
+        net.train(train_loader, test_loader)
+    else:
+        # training loop
+        for epoch in range(args.epochs):
+            loss, top1_train, top5_train = train(model, args, epoch, train_loader, criterion, optimizer, scheduler)
+            top1_test, top5_test = test(model, args, test_loader)
+            # log results
+            wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                        "train_loss": loss.item(), "lr": scheduler.get_last_lr()[0], 
+                        "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+            # print
+            print(f"[Epoch {epoch}/{args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
             # save model
             torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, args.results_dir + '/model_last.pth')
+        
+        with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
+            args = vars(args)
+            json.dump(args, indent=4, fp=fp)
 
-def train(net, train_loader, optimizer, device, epoch, dataset_len, args):
+def train(net, args, epoch, train_loader, criterion, optimizer, scheduler):
+    """
+    supervised training (to delete)
+    """
     net.train()
-    adjust_learning_rate(optimizer, epoch, args)
-    total_loss, total_num, train_bar = 0.0, 0, tqdm(train_loader)
-
-    # train model
-    for pos_1, pos_2, label, sen_attr, dataset_idx in train_bar:
-        pos_1, pos_2, label = pos_1.to(device), pos_2.to(device), label.to(device)
-        # batch_pos = torch.eye(pos_1.shape[0]).to(device)
-        loss, list_hiddens = net(pos_1, pos_2, dataset_idx, dataset_len)
-        feat_1, feat_2, proj_1, proj_2 = list_hiddens[0], list_hiddens[1], list_hiddens[2], list_hiddens[3]
+    scaler = GradScaler(enabled=args.fp16_precision)
+    n_iter, train_bar = 0, tqdm(train_loader)
+    for images, targets, _, _ in train_bar:
+        images = images.to(args.device)
+        targets = targets.to(args.device)
+        features, mlp_features, logits = net(images)
+        loss = criterion(logits, targets)
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update() 
 
-        total_num += train_loader.batch_size
-        total_loss += loss.item() * train_loader.batch_size
-        train_bar.set_description('Train Epoch: [{}/{}], lr: {:.6f}, Loss: {:.4f}'.format(epoch, args.epochs, optimizer.param_groups[0]['lr'], total_loss / total_num))
-
-    return total_loss / total_num 
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """Decay the learning rate based on schedule"""
-    lr = args.lr
-    if args.cos:  # cosine lr schedule
-        lr *= 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
-    else:  # stepwise lr schedule
-        for milestone in args.schedule:
-            lr *= 0.1 if epoch >= milestone else 1.
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-def fit_linear_classifier(net, train_loader, dataset_len, device):
-    net.eval()
-    total_loss, total_num, train_bar = 0.0, 0, tqdm(train_loader)
-
-    # train model
-    feats = []
-    labels = []
-    with torch.no_grad():
-        for pos_1, pos_2, label, sen_attr, dataset_idx in train_bar:
-            pos_1, pos_2 = pos_1.to(device), pos_2.to(device)
-            loss, list_hiddens = net(pos_1, pos_2, dataset_idx, dataset_len)
-            feats.append(list_hiddens[1].detach().cpu().numpy())
-            labels.append(label.cpu().numpy())
-    feats = np.concatenate(feats)
-    labels = np.concatenate(labels)
-
-    linear_model = LogisticRegression().fit(feats, labels)
-    return linear_model.coef_, linear_model.intercept_
-
-def test(net, train_loader, test_loader, epoch, device, dataset_len, args):
-    """
-    test using a linear classifier on top of backbone features
-    """
-    net.eval()
-    total_num, test_bar = 0.0, tqdm(test_loader)
-    top1_accuracy, top5_accuracy = 0.0, 0.0
-
-    # fit linear classifier for evaluation
-    w_cls, b_cls = fit_linear_classifier(net, train_loader, dataset_len, device)
-    w_cls = torch.Tensor(w_cls).to(device)
-    b_cls = torch.Tensor(b_cls).to(device)
+        if n_iter % args.log_every_n_steps == 0:
+            top1_train, top5_train = accuracy(logits, targets, topk=(1, 5))
+            train_bar.set_description('Train Epoch: [{}/{}], lr: {:.6f}, Loss: {:.4f}, Acc1: {:.4f}'.format(
+                                        epoch, 
+                                        args.epochs, 
+                                        scheduler.get_last_lr()[0],
+                                        loss.item(), 
+                                        top1_train.item()
+                                    ))
+        n_iter += 1
     
-    # calculate accuracy
+    # warmup for the first 10 epochs
+    if epoch >= 10:
+        scheduler.step() 
+
+    return loss, top1_train, top5_train
+
+def test(net, args, test_loader):
+    """
+    supervised testing (to delete)
+    """
+    net.eval()
+    total_num, top1_acc, top5_acc = 0.0, 0.0, 0.0
+    test_bar = tqdm(test_loader)
     with torch.no_grad():
-        for counter, [x, y, labels, sens_att, dataset_idx] in enumerate(test_bar):
-            x,y = x.to(device), y.to(device)
-            labels = labels.to(device)
-            loss, list_hiddens = net(x, y, dataset_idx, dataset_len)
-            feat_1, feat_2, proj_1, proj_2 = list_hiddens[0], list_hiddens[1], list_hiddens[2], list_hiddens[3]
-            logits = feat_2 @ w_cls.T + b_cls
-            top1, top5 = accuracy(logits, labels, topk=(1,5))
-            total_num += test_loader.batch_size
-            top1_accuracy += top1[0]
-            top5_accuracy += top5[0]
-        top1_accuracy /= (counter + 1)
-        top5_accuracy /= (counter + 1)
-        test_bar.set_description('Test Epoch: [{}/{}] Acc@1:{:.2f}% Acc@5:{:.2f}%'.format(epoch, args.epochs, top1_accuracy, top5_accuracy))
-        print('Test Epoch: [{}/{}] Acc@1:{:.2f}% Acc@5:{:.2f}%'.format(epoch, args.epochs, top1_accuracy, top5_accuracy))
-        return top1_accuracy.item()
+        for counter, [imgs, targs, _, _] in enumerate(test_bar):
+            imgs = imgs.to(args.device)
+            targs = targs.to(args.device)
+            _, _, logits = net(imgs)
+            top1, top5 = accuracy(logits, targs, topk=(1,5))
+            total_num += targs.shape[0]
+            top1_acc += top1[0]
+            top5_acc += top5[0]
+            test_bar.set_description('Testing: ')
+        top1_acc /= (counter + 1)
+        top5_acc /= (counter + 1)
+        return top1_acc, top5_acc 
     
 if __name__ == '__main__':
     main()

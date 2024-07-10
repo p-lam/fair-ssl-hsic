@@ -4,13 +4,17 @@ from torch import nn
 from torchvision.models import resnet18
 from modules.hsic import * 
 from functools import partial 
-    
+from torchvision.models import resnet18
+
 class SSL_HSIC(nn.Module):
     """SSL HSIC wrapper """
-    def __init__(self, args, dim=128, arch='resnet18', bn_splits=8):
+    def __init__(self, *args, **kwargs):
         super(SSL_HSIC, self).__init__()
-        self.args = args
-        self.net = Model(feature_dim=dim, arch=arch, bn_splits=bn_splits)
+        self.args = kwargs['args']
+        self.model = kwargs['model'].to(self.args.device)
+        self.optimizer = kwargs['optimizer']
+        self.scheduler = kwargs['scheduler']
+        self.criterion = torch.nn.CrossEntropyLoss().to(self.args.device)
 
     def l2_norm(self, x):
         return torch.nn.functional.normalize(x, p=2.0, dim=1, eps=1e-12, out=None)
@@ -56,65 +60,26 @@ class Model(nn.Module):
     (i) replaces conv1 with kernel=3, str=1
     (ii) removes pool1
     """
-    def __init__(self, feature_dim=128, arch=None, bn_splits=8):
+    def __init__(self, num_classes=10, feature_dim=128, arch=None, bn_splits=8):
         super(Model, self).__init__()
-
         self.f = []
         for name, module in resnet18().named_children():
             if name == 'conv1':
-                module = nn.Conv2d(3, 64, kernel_size=4, stride=2, padding=1, bias=False)
+                module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
             if not isinstance(module, nn.Linear) and not isinstance(module, nn.MaxPool2d):
                 self.f.append(module)
+        # pool
+        self.pool = nn.AdaptiveAvgPool2d(1)
         # encoder
         self.f = nn.Sequential(*self.f)
         # projection head
-        # self.g = nn.Sequential(nn.Linear(2048, 512, bias=False), nn.BatchNorm1d(512),
-        #                        nn.ReLU(), nn.Linear(512, feature_dim, bias=True))
-        self.g = nn.Sequential(nn.Linear(512, 512, bias=False), nn.BatchNorm1d(512),
-                               nn.ReLU(), nn.Linear(512, feature_dim, bias=True))
-
-        # use split batchnorm
-        # norm_layer = partial(SplitBatchNorm, num_splits=bn_splits) if bn_splits > 1 else nn.BatchNorm2d
-        # resnet_arch = getattr(resnet, arch)
-        # net = resnet_arch(num_classes=feature_dim, norm_layer=norm_layer)
-
-        # self.net = []
-        # for name, module in net.named_children():
-        #     if name == 'conv1':
-        #         module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        #     if isinstance(module, nn.MaxPool2d):
-        #         continue
-        #     if isinstance(module, nn.Linear):
-        #         self.net.append(nn.Flatten(1))
-        #     self.net.append(module)
-
-        # self.net = nn.Sequential(*self.net)
+        self.g = nn.Sequential(nn.Linear(512, 512, bias=False), nn.ReLU())
+        self.fc = nn.Linear(512, num_classes)
 
     def forward(self, x):
         x = self.f(x)
-        feature = torch.flatten(x, start_dim=1)
-        out = self.g(feature)
-        return F.normalize(feature, dim=-1), F.normalize(out, dim=-1)
-
-class SplitBatchNorm(nn.BatchNorm2d):
-    def __init__(self, num_features, num_splits, **kw):
-        super().__init__(num_features, **kw)
-        self.num_splits = num_splits
-        
-    def forward(self, input):
-        N, C, H, W = input.shape
-        if self.training or not self.track_running_stats:
-            running_mean_split = self.running_mean.repeat(self.num_splits)
-            running_var_split = self.running_var.repeat(self.num_splits)
-            outcome = nn.functional.batch_norm(
-                input.view(-1, C * self.num_splits, H, W), running_mean_split, running_var_split, 
-                self.weight.repeat(self.num_splits), self.bias.repeat(self.num_splits),
-                True, self.momentum, self.eps).view(N, C, H, W)
-            self.running_mean.data.copy_(running_mean_split.view(self.num_splits, C).mean(dim=0))
-            self.running_var.data.copy_(running_var_split.view(self.num_splits, C).mean(dim=0))
-            return outcome
-        else:
-            return nn.functional.batch_norm(
-                input, self.running_mean, self.running_var, 
-                self.weight, self.bias, False, self.momentum, self.eps)
-                
+        x = self.pool(x).squeeze()
+        out = self.g(x)
+        logits = self.fc(x)
+        return F.normalize(x, dim=-1), F.normalize(out, dim=-1), logits
+    
