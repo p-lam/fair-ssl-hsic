@@ -1,10 +1,16 @@
 import torch
 import torch.nn.functional as F
+import os 
+import wandb
+from tqdm import tqdm
 from torch import nn
 from torchvision.models import resnet18
 from modules.hsic import * 
 from functools import partial 
 from torchvision.models import resnet18
+from torch.cuda.amp import GradScaler, autocast
+import time
+from utils import accuracy, save_checkpoint
 
 class SSL_HSIC(nn.Module):
     """SSL HSIC wrapper """
@@ -31,21 +37,116 @@ class SSL_HSIC(nn.Module):
         hsic_zz = self.approximate_hsic_zz(z1, z2)
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) 
 
-    def forward(self, im1, im2, idx, N):
-        z1, pred1 = self.net(im1)
-        z2, pred2 = self.net(im2) 
-        feat_1, proj_1 = self.l2_norm(z1), self.l2_norm(pred1)
-        feat_2, proj_2 = self.l2_norm(z2), self.l2_norm(pred2)
-        loss = self.hsic_objective(feat_1, feat_2, idx, N)
+    def train(self, train_loader, test_loader, N):
+        scaler = GradScaler(enabled=self.args.fp16_precision)
+        model_checkpoints_folder = self.args.results_dir
+        if not os.path.exists(model_checkpoints_folder):
+            os.makedirs(model_checkpoints_folder)
+        n_iter, train_bar = 0, tqdm(train_loader)
+
+        for epoch_counter in range(self.args.epochs):
+            for images, targets, _, idx in train_bar:
+                im1, im2 = images[0], images[1] 
+                im1, im2 = im1.to(self.args.device), im2.to(self.args.device)
+                targets = targets.to(self.args.device)
+
+                with autocast(enabled=self.args.fp16_precision):
+                    z1, mlp_feats1, logits1 = self.model(im1)
+                    z2, mlp_feats2, logits2 = self.model(im2) 
+                    feat_1, proj_1 = self.l2_norm(z1), self.l2_norm(logits1)
+                    feat_2, proj_2 = self.l2_norm(z2), self.l2_norm(logits2)
+                    # t1 = time.time()
+                    loss = self.hsic_objective(feat_1, feat_2, idx, N)
+                    # print(f"Objective took {time.time() - t1} to evaluate")
+
+                self.optimizer.zero_grad()
+                scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update() 
+
+                if n_iter % self.args.log_every_n_steps == 0:
+                    top1_train, top5_train = accuracy(logits1, targets, topk=(1, 5))
+                    train_bar.set_description('Train Epoch: [{}/{}], lr: {:.6f}, Loss: {:.4f}, Acc1: {:.4f}'.format(
+                                                epoch_counter, 
+                                                self.args.epochs, 
+                                                self.scheduler.get_last_lr()[0],
+                                                loss.item(), 
+                                                top1_train.item()
+                                            ))
+                n_iter += 1
+
+            top1_test, top5_test = self.evaluate(train_loader, test_loader)
+
+            # warmup for the first 10 epochs
+            if epoch_counter >= 10:
+                self.scheduler.step()
+
+            # log and print results
+            wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                       "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
+                       "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+            print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
+
         return loss, [feat_1, feat_2, proj_1, proj_2]
 
+    def fit_linear_classifier(self, train_loader):
+        scaler = GradScaler(enabled=self.args.fp16_precision)
+        n_iter, train_bar = 0, tqdm(train_loader)
+        train_bar.set_description('Linear Classifier Training...')
+        opt_fc = torch.optim.SGD(self.model.fc.parameters(), lr=self.args.lr, weight_decay=self.args.wd, momentum=0.9)    
+        for epoch_counter in range(5):
+            for images, targets, _, _ in train_bar:
+                images = images[0]
+                images = images.to(self.args.device)
+                targets = targets.to(self.args.device)
+
+                with autocast(enabled=self.args.fp16_precision):
+                    features, _, _ = self.model(images)
+                    pred = self.model.fc(features.detach())
+                    loss_sup = self.criterion(pred, targets)
+
+                self.optimizer.zero_grad()
+                scaler.scale(loss_sup).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
+
+    def evaluate(self, train_loader, test_loader):
+        """
+        test using a linear classifier on top of backbone features
+        """
+        self.model.eval()
+        total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
+        test_bar = tqdm(test_loader)
+
+        # fit linear classifier for evaluation
+        self.fit_linear_classifier(train_loader)
+        
+        # calculate accuracy
+        with torch.no_grad():
+            with autocast(enabled=self.args.fp16_precision):
+                for counter, [imgs, targs, _, _] in enumerate(test_bar): 
+                    imgs = imgs.to(self.args.device)
+                    targs = targs.to(self.args.device)
+
+                    _, _, logits = self.model(imgs)
+                    loss = self.criterion(logits, targs)
+
+                    top1, top5 = accuracy(logits, targs, topk=(1,5))
+                    total_num += targs.shape[0]
+                    top1_accuracy += top1[0]
+                    top5_accuracy += top5[0]
+                    test_bar.set_description('Testing: ')
+                top1_accuracy /= (counter + 1)
+                top5_accuracy /= (counter + 1)
+                return top1_accuracy, top5_accuracy
+            
 class Fair_SSL_HSIC(SSL_HSIC):
     """Fair SSL HSIC wrapper TODO"""
     def __init__(self):
         super(Fair_SSL_HSIC, self).__init__()
 
     def approximate_hsic_za(self, hidden, sens_att):
-        return hsic_normalized_cca(hidden, sens_att)
+        return hsic_regular(hidden, sens_att)
 
     def hsic_objective(self, z1, z2, target, sens_att):
         hsic_zy = self.approximate_hsic_zy(self, z1, target)
@@ -81,5 +182,5 @@ class Model(nn.Module):
         x = self.pool(x).squeeze()
         out = self.g(x)
         logits = self.fc(x)
-        return F.normalize(x, dim=-1), F.normalize(out, dim=-1), logits
+        return x, out, logits
     

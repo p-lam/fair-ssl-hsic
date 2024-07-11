@@ -40,15 +40,15 @@ def parse_args():
     parser.add_argument('--model', default='ssl-hsic', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic', 'supervised'])
     parser.add_argument('-a', '--arch', default='resnet18', help='resnet architecture')
     # training args/hyperparameters
-    parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float, metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--wd', default=1e-4, type=float, metavar='W', help='weight decay')
+    parser.add_argument('--lr', '--learning-rate', default=0.5, type=float, metavar='LR', help='initial learning rate', dest='lr')
+    parser.add_argument('--wd', default=1e-6, type=float, metavar='W', help='weight decay')
     parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
     parser.add_argument('--schedule', default=[600, 900], nargs='*', type=int, help='learning rate schedule (when to drop lr by 10x); does not take effect if --cos is on')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--start_epoch', default=1, type=int, help='Starting epoch')
-    parser.add_argument('--lambda', default=1, type=int, help='Regularization Coefficient')
+    parser.add_argument('--lambda', default=0.5, type=int, help='Regularization Coefficient')
     parser.add_argument('--gamma', default=3, type=int, help='Regularization Coefficient')
     parser.add_argument('--hsic_type', default='regular', type=str, help='type of hsic approx: regular, normalized, normalized cca') 
     parser.add_argument('--n_views', default=2, type=int, help="number of augmentations for simclr/ssl") 
@@ -128,9 +128,10 @@ def main():
         os.mkdir(args.results_dir)
 
     # training loop (TODO: clean up)
+    dataset_len = len(train_dataset) + len(test_dataset)
     if args.model != "supervised":
         net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-        net.train(train_loader, test_loader)
+        net.train(train_loader, test_loader, dataset_len)
     else:
         # training loop
         for epoch in range(args.epochs):
