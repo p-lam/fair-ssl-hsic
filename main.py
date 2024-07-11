@@ -26,6 +26,10 @@ from sklearn.linear_model import LogisticRegression
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
+# for reproducibility
+torch.manual_seed(0)
+np.random.seed(0)
+
 models = {"simclr": SimCLR, 
           "ssl-hsic": SSL_HSIC, 
           "fair-ssl-hsic": Fair_SSL_HSIC}
@@ -131,7 +135,10 @@ def main():
     dataset_len = len(train_dataset) + len(test_dataset)
     if args.model != "supervised":
         net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-        net.train(train_loader, test_loader, dataset_len)
+        if args.model == "simclr":
+            net.train(train_loader, test_loader)
+        else: 
+            net.train(train_loader, test_loader, dataset_len)
     else:
         # training loop
         for epoch in range(args.epochs):

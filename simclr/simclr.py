@@ -29,10 +29,11 @@ class SimCLR(object):
         labels = torch.cat([torch.arange(self.args.batch_size) for i in range(self.args.n_views)], dim=0)
         labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
         labels = labels.to(self.args.device)
-        similarity_matrix = torch.matmul(features, features.T)
 
         # normalize features
         features = F.normalize(features, dim=-1)
+
+        similarity_matrix = torch.matmul(features, features.T)
 
         # discard the main diagonal from both: labels and similarities matrix
         mask = torch.eye(labels.shape[0], dtype=torch.bool).to(self.args.device)
