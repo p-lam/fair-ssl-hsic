@@ -93,8 +93,14 @@ class SSL_HSIC(nn.Module):
         scaler = GradScaler(enabled=self.args.fp16_precision)
         n_iter, train_bar = 0, tqdm(train_loader)
         train_bar.set_description('Linear Classifier Training...')
-        opt_fc = torch.optim.SGD(self.model.fc.parameters(), lr=self.args.lr, weight_decay=self.args.wd, momentum=0.9)    
-        for epoch_counter in range(5):
+        for (name, param) in self.model.named_modules():
+            if "fc" not in name:
+                param.eval()
+        self.model.fc.train()
+        FINETUNE_EPOCHS = 50
+        opt_fc = torch.optim.SGD(self.model.fc.parameters(), lr=0.3, weight_decay=1e-6, momentum=0.9)  
+        schedule_fc = torch.optim.lr_scheduler.CosineAnnealingLR(opt_fc, T_max=FINETUNE_EPOCHS)  
+        for epoch in range(FINETUNE_EPOCHS):
             for images, targets, _, _ in train_bar:
                 images = images[0]
                 images = images.to(self.args.device)
@@ -105,10 +111,11 @@ class SSL_HSIC(nn.Module):
                     pred = self.model.fc(features.detach())
                     loss_sup = self.criterion(pred, targets)
 
-                self.optimizer.zero_grad()
+                opt_fc.zero_grad()
                 scaler.scale(loss_sup).backward()
-                scaler.step(self.optimizer)
+                scaler.step(opt_fc)
                 scaler.update()
+            schedule_fc.step()
 
     def evaluate(self, train_loader, test_loader):
         """
@@ -174,13 +181,13 @@ class Model(nn.Module):
         # encoder
         self.f = nn.Sequential(*self.f)
         # projection head
-        self.g = nn.Sequential(nn.Linear(512, 512, bias=False), nn.ReLU())
+        self.g = nn.Sequential(nn.Linear(512, feature_dim, bias=False), nn.ReLU())
         self.fc = nn.Linear(512, num_classes)
 
     def forward(self, x):
         x = self.f(x)
         x = self.pool(x).squeeze()
         out = self.g(x)
-        logits = self.fc(x)
-        return x, out, logits
+        logits = self.fc(x.detach())
+        return x, F.normalize(out, dim=-1), logits
     

@@ -110,12 +110,12 @@ def main():
         print("Validation set not implemented!")
 
     # load model
-    model = Model().to(args.device)
+    model = Model(feature_dim=args.feature_dim).to(args.device)
 
     # define optimizer
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd, momentum=0.9)    
     # define cosine scheduler
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR( optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
     # define loss criterion
     criterion = torch.nn.CrossEntropyLoss().to(args.device)
 
@@ -153,9 +153,9 @@ def main():
             # save model
             torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, args.results_dir + '/model_last.pth')
         
-        with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
-            args = vars(args)
-            json.dump(args, indent=4, fp=fp)
+    with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
+        args = vars(args)
+        json.dump(args, indent=4, fp=fp)
 
 def train(net, args, epoch, train_loader, criterion, optimizer, scheduler):
     """
