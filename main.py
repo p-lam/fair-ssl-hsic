@@ -155,6 +155,10 @@ def main():
         
     with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
         args = vars(args)
+        try:
+            del args["device"]
+        except:
+            pass
         json.dump(args, indent=4, fp=fp)
 
 def train(net, args, epoch, train_loader, criterion, optimizer, scheduler):

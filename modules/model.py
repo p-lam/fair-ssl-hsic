@@ -10,6 +10,7 @@ from functools import partial
 from torchvision.models import resnet18
 from torch.cuda.amp import GradScaler, autocast
 import time
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from utils import accuracy, save_checkpoint
 
 class SSL_HSIC(nn.Module):
@@ -87,35 +88,68 @@ class SSL_HSIC(nn.Module):
                        "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
             print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
 
+            filename = os.path.join(model_checkpoints_folder, self.args.wandb_name) + ".pth.tar"
+            # save model checkpoints
+            save_checkpoint({
+                'epoch': self.args.epochs,
+                'arch': self.args.arch,
+                'state_dict': self.model.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+            }, is_best=False, filename=filename, wandb_name=self.args.wandb_name)
+
+
         return loss, [feat_1, feat_2, proj_1, proj_2]
 
     def fit_linear_classifier(self, train_loader):
         scaler = GradScaler(enabled=self.args.fp16_precision)
-        n_iter, train_bar = 0, tqdm(train_loader)
-        train_bar.set_description('Linear Classifier Training...')
+        
+        print('Linear Classifier Training...')
         for (name, param) in self.model.named_modules():
             if "fc" not in name:
                 param.eval()
         self.model.fc.train()
-        FINETUNE_EPOCHS = 50
+        self.model.fc.weight.data.normal_(mean=0.0, std=0.01)
+        self.model.fc.bias.data.zero_()
+        FINETUNE_EPOCHS = 5  # might do slightly better with more training and less LR (e.g. 90 epochs and 0.05 LR in original paper)
+        
         opt_fc = torch.optim.SGD(self.model.fc.parameters(), lr=0.3, weight_decay=1e-6, momentum=0.9)  
         schedule_fc = torch.optim.lr_scheduler.CosineAnnealingLR(opt_fc, T_max=FINETUNE_EPOCHS)  
-        for epoch in range(FINETUNE_EPOCHS):
-            for images, targets, _, _ in train_bar:
+
+        FAST = True  # skip standard training (SGD with data augmentation) and just fit with sklearn
+        if FAST:
+            X = []
+            y = []
+            for images, targets, _, _ in train_loader:
                 images = images[0]
                 images = images.to(self.args.device)
-                targets = targets.to(self.args.device)
 
                 with autocast(enabled=self.args.fp16_precision):
-                    features, _, _ = self.model(images)
-                    pred = self.model.fc(features.detach())
-                    loss_sup = self.criterion(pred, targets)
+                    feats, _, _ = self.model(images)
+                    X.append(feats.detach().cpu().numpy())
+                    y.append(targets.numpy())
+            X = np.concatenate(X)
+            y = np.concatenate(y)
 
-                opt_fc.zero_grad()
-                scaler.scale(loss_sup).backward()
-                scaler.step(opt_fc)
-                scaler.update()
-            schedule_fc.step()
+            fc = LogisticRegression(penalty=None).fit(X, y)
+            self.model.fc.weight.data = torch.Tensor(fc.coef_).cuda()
+            self.model.fc.bias.data = torch.Tensor(fc.intercept_).cuda()
+
+        else:
+            for epoch in tqdm(range(FINETUNE_EPOCHS)):
+                for images, targets, _, _ in train_loader:
+                    images = images[0]
+                    images = images.to(self.args.device)
+                    targets = targets.to(self.args.device)
+
+                    with autocast(enabled=self.args.fp16_precision):
+                        _, _, pred = self.model(images)
+                        loss_sup = self.criterion(pred, targets)
+
+                    opt_fc.zero_grad()
+                    scaler.scale(loss_sup).backward()
+                    scaler.step(opt_fc)
+                    scaler.update()
+                schedule_fc.step()
 
     def evaluate(self, train_loader, test_loader):
         """
@@ -123,11 +157,9 @@ class SSL_HSIC(nn.Module):
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
+        self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
-        # fit linear classifier for evaluation
-        self.fit_linear_classifier(train_loader)
-        
         # calculate accuracy
         with torch.no_grad():
             with autocast(enabled=self.args.fp16_precision):
