@@ -41,19 +41,19 @@ def parse_args():
     parser.add_argument("--data", help='path for loading data', default='data', type=str)
     # model arguments
     parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
-    parser.add_argument('--model', default='ssl-hsic', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic', 'supervised'])
+    parser.add_argument('--model', default='simclr', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic', 'supervised'])
     parser.add_argument('-a', '--arch', default='resnet18', help='resnet architecture')
     # training args/hyperparameters
-    parser.add_argument('--lr', '--learning-rate', default=0.5, type=float, metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--wd', default=1e-6, type=float, metavar='W', help='weight decay')
+    parser.add_argument('--lr', '--learning-rate', default=3e-2, type=float, metavar='LR', help='initial learning rate', dest='lr')
+    parser.add_argument('--wd', default=1e-4, type=float, metavar='W', help='weight decay')
     parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
     parser.add_argument('--schedule', default=[600, 900], nargs='*', type=int, help='learning rate schedule (when to drop lr by 10x); does not take effect if --cos is on')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--start_epoch', default=1, type=int, help='Starting epoch')
-    parser.add_argument('--lambda', default=0.5, type=int, help='Regularization Coefficient')
-    parser.add_argument('--gamma', default=3, type=int, help='Regularization Coefficient')
+    parser.add_argument('--lamb', default=0.5, type=int, help='Regularization Coefficient')
+    parser.add_argument('--gamma', default=0.7, type=int, help='Regularization Coefficient')
     parser.add_argument('--hsic_type', default='regular', type=str, help='type of hsic approx: regular, normalized, normalized cca') 
     parser.add_argument('--n_views', default=2, type=int, help="number of augmentations for simclr/ssl") 
     parser.add_argument('--temperature', default=0.07, type=float, help="contrastive temperature") 
@@ -70,7 +70,7 @@ def parse_args():
 
     return args
 
-def main():
+def main(config=None):
     args = parse_args()
     args.device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 
@@ -112,54 +112,53 @@ def main():
     # load model
     model = Model(feature_dim=args.feature_dim).to(args.device)
 
-    # define optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wd, momentum=0.9)    
-    # define cosine scheduler
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
-    # define loss criterion
-    criterion = torch.nn.CrossEntropyLoss().to(args.device)
+    with wandb.init(config=config):
+        config = wandb.config 
+        # define optimizer
+        optimizer = torch.optim.SGD(model.parameters(), lr=config.lr, weight_decay=args.wd, momentum=0.9)    
+        # define cosine scheduler
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
+        # define loss criterion
+        criterion = torch.nn.CrossEntropyLoss().to(args.device)
 
-    # load model if needed 
-    if args.resume != '':
-        checkpoint = torch.load(args.resume)
-        model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        args.start_epoch = checkpoint['epoch'] + 1
-        print('Loaded from: {}'.format(args.resume))
+        # load model if needed 
+        if args.resume != '':
+            checkpoint = torch.load(args.resume)
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            args.start_epoch = checkpoint['epoch'] + 1
+            print('Loaded from: {}'.format(args.resume))
 
-    # logging
-    if not os.path.exists(args.results_dir):
-        os.mkdir(args.results_dir)
+        # logging
+        if not os.path.exists(args.results_dir):
+            os.mkdir(args.results_dir)
 
-    # training loop (TODO: clean up)
-    dataset_len = len(train_dataset) + len(test_dataset)
-    if args.model != "supervised":
-        net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-        if args.model == "simclr":
-            net.train(train_loader, test_loader)
-        else: 
-            net.train(train_loader, test_loader, dataset_len)
-    else:
-        # training loop
-        for epoch in range(args.epochs):
-            loss, top1_train, top5_train = train(model, args, epoch, train_loader, criterion, optimizer, scheduler)
-            top1_test, top5_test = test(model, args, test_loader)
-            # log results
-            wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
-                        "train_loss": loss.item(), "lr": scheduler.get_last_lr()[0], 
-                        "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
-            # print
-            print(f"[Epoch {epoch}/{args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
-            # save model
-            torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, args.results_dir + '/model_last.pth')
-        
-    with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
-        args = vars(args)
-        try:
-            del args["device"]
-        except:
-            pass
-        json.dump(args, indent=4, fp=fp)
+        # training loop (TODO: clean up)
+        dataset_len = len(train_dataset) + len(test_dataset)
+        if args.model != "supervised":
+            net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
+            net.train(train_loader, test_loader, N=dataset_len)
+        else:
+            # training loop
+            for epoch in range(args.epochs):
+                loss, top1_train, top5_train = train(model, args, epoch, train_loader, criterion, optimizer, scheduler)
+                top1_test, top5_test = test(model, args, test_loader)
+                # log results
+                wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                            "train_loss": loss.item(), "lr": scheduler.get_last_lr()[0], 
+                            "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+                # print
+                print(f"[Epoch {epoch}/{args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
+                # save model
+                torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, args.results_dir + '/model_last.pth')
+            
+        with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
+            args = vars(args)
+            try:
+                del args["device"]
+            except:
+                pass
+            json.dump(args, indent=4, fp=fp)
 
 def train(net, args, epoch, train_loader, criterion, optimizer, scheduler):
     """

@@ -113,13 +113,10 @@ def multicolor_grayscale_arr(img, target=None):
     img[img < 75] = 0.0
     img[img >= 75] = 255.0
     color_img /= 255.0
-    color_img[img != 0] = ColoredMNIST.CHMAP[fg_color]
+    color_rgb = ColoredMNIST.CHMAP[fg_color]
+    color_img[img != 0] = color_rgb
     color_img[img == 0] *= torch.tensor([0, 0, 0])
-
-    if target is not None:
-        return (color_img.numpy()).astype(dtype)
-    else:
-        return (color_img.numpy()).astype(dtype), rand_target
+    return (color_img.numpy()).astype(dtype), color_rgb 
 
 class ColoredMNIST(datasets.VisionDataset):
     """
@@ -183,7 +180,7 @@ class ColoredMNIST(datasets.VisionDataset):
         train_mnist = datasets.mnist.MNIST(self.root, train=True, download=True)
         train_set, test_set = [], []
 
-        if binary:
+        if binary: # same as IRM experiment code
             for idx, (im, label) in enumerate(train_mnist):
                 if idx % 10000 == 0:
                     print(f'Converting image {idx}/{len(train_mnist)}')
@@ -217,34 +214,15 @@ class ColoredMNIST(datasets.VisionDataset):
             for idx, (im, label) in enumerate(train_mnist):
                 im_array = np.array(im)
                 if idx < 40000: 
-                    colored_arr = multicolor_grayscale_arr(im_array, target=label)
-                    train_set.append([Image.fromarray(colored_arr), label, label])
+                    colored_arr, color = multicolor_grayscale_arr(im_array, target=label)
                 else: 
-                    colored_arr, rand_targets = multicolor_grayscale_arr(im_array, target=None)
-                    test_set.append([Image.fromarray(colored_arr), label, rand_targets])
+                    colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
+                test_set.append([Image.fromarray(colored_arr), label, color])
 
         # save new data
         os.makedirs(colored_mnist_dir)
         torch.save(train_set, os.path.join(colored_mnist_dir, 'train.pt'))
         torch.save(test_set, os.path.join(colored_mnist_dir, 'test.pt'))
-
-class ColoredMNISTVanilla(ColoredMNIST):
-    """
-    ColoredMNIST wrapper that outputs images instead of pairs
-    """
-    def __init__(self, root='data', env='train', binary=False):
-        super(ColoredMNISTVanilla, self).__init__(root, env=env, binary=binary)
-        if env in ['train','test']:
-            self.data_label_tuples = torch.load(os.path.join(self.root, 'ColoredMNIST', env) + '.pt')
-        else:
-            raise RuntimeError(f'{env} env unknown. Valid envs are train, test')
-
-    def __getitem__(self, index):
-        # load the data
-        img, label, color = self.data_label_tuples[index]
-        img = self.transform(img)
-        # for printing, comment this and uncomment below for training
-        return img, label, color
 
 def plot_dataset_digits(dataset, train=True):
     """

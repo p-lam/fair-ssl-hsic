@@ -32,7 +32,7 @@ class SSL_HSIC(nn.Module):
     def approximate_hsic_zz(self, z1, z2):
         return hsic_regular(z1, z2)
 
-    def hsic_objective(self, z1, z2, idx, N):
+    def hsic_objective(self, z1, z2, idx, N, sens_att=None):
         target = F.one_hot(idx, num_classes=N)
         hsic_zy = self.approximate_hsic_zy(z1, target, k_type_y='linear')
         hsic_zz = self.approximate_hsic_zz(z1, z2)
@@ -46,7 +46,7 @@ class SSL_HSIC(nn.Module):
         n_iter, train_bar = 0, tqdm(train_loader)
 
         for epoch_counter in range(self.args.epochs):
-            for images, targets, _, idx in train_bar:
+            for images, targets, sens_att, idx in train_bar:
                 im1, im2 = images[0], images[1] 
                 im1, im2 = im1.to(self.args.device), im2.to(self.args.device)
                 targets = targets.to(self.args.device)
@@ -57,7 +57,7 @@ class SSL_HSIC(nn.Module):
                     feat_1, proj_1 = self.l2_norm(z1), self.l2_norm(logits1)
                     feat_2, proj_2 = self.l2_norm(z2), self.l2_norm(logits2)
                     # t1 = time.time()
-                    loss = self.hsic_objective(feat_1, feat_2, idx, N)
+                    loss = self.hsic_objective(feat_1, feat_2, idx, N, sens_att=sens_att)
                     # print(f"Objective took {time.time() - t1} to evaluate")
 
                 self.optimizer.zero_grad()
@@ -181,18 +181,20 @@ class SSL_HSIC(nn.Module):
             
 class Fair_SSL_HSIC(SSL_HSIC):
     """Fair SSL HSIC wrapper TODO"""
-    def __init__(self):
-        super(Fair_SSL_HSIC, self).__init__()
+    def __init__(self, *args, **kwargs):
+        super(Fair_SSL_HSIC, self).__init__(*args, **kwargs)
 
     def approximate_hsic_za(self, hidden, sens_att):
+        sens_att = F.one_hot(sens_att, num_classes=10)
         return hsic_regular(hidden, sens_att)
-
-    def hsic_objective(self, z1, z2, target, sens_att):
-        hsic_zy = self.approximate_hsic_zy(self, z1, target)
-        hsic_zz = self.approximate_hsic_zz(self, z1, z2)
-        hsic_za = self.approximate_hsic_za(self, z1, sens_att)
-        return -hsic_zy + self.gamma*torch.sqrt(hsic_zz) - self.lamb*hsic_za
-
+    
+    def hsic_objective(self, z1, z2, idx, N, sens_att):
+        target = F.one_hot(idx, num_classes=N)
+        hsic_zy = self.approximate_hsic_zy(z1, target, k_type_y='linear')
+        hsic_zz = self.approximate_hsic_zz(z1, z2)
+        hsic_za = self.approximate_hsic_za(z1, sens_att)
+        return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) - self.args.lamb*hsic_za
+    
 class Model(nn.Module):
     """
     Common CIFAR ResNet recipe.

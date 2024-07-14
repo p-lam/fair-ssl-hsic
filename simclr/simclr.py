@@ -48,7 +48,7 @@ class SimCLR(object):
         logits = logits / self.args.temperature
         return logits, labels
 
-    def train(self, train_loader, test_loader):
+    def train(self, train_loader, test_loader, N=None):
         scaler = GradScaler(enabled=self.args.fp16_precision)
         model_checkpoints_folder = self.args.results_dir
         if not os.path.exists(model_checkpoints_folder):
@@ -78,37 +78,36 @@ class SimCLR(object):
                 scaler.step(self.optimizer)
                 scaler.update()
 
-                if n_iter % self.args.log_every_n_steps == 0:
-                    top1_train, top5_train = accuracy(pred, torch.cat([targets, targets]), topk=(1, 5))
-                    train_bar.set_description('Train Epoch: [{}/{}], lr: {:.6f}, Loss: {:.4f}, Acc1: {:.4f}'.format(
-                                                epoch_counter, 
-                                                self.args.epochs, 
-                                                self.scheduler.get_last_lr()[0],
-                                                loss.item(), 
-                                                top1_train.item()
-                                            ))
-                n_iter += 1
-            
-            top1_test, top5_test = self.evaluate(train_loader, test_loader)
+                train_bar.set_description('Training'.format(
+                                        epoch_counter, 
+                                        self.args.epochs, 
+                                    ))
+                
+            top1_train, top5_train = accuracy(pred, torch.cat([targets, targets]), topk=(1, 5))
 
             # warmup for the first 10 epochs
             if epoch_counter >= 10:
                 self.scheduler.step()
 
-            # log and print results
-            wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
-                        "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
-                        "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
-            print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
-            
-            filename = os.path.join(model_checkpoints_folder, self.args.wandb_name) + ".pth.tar"
-            # save model checkpoints
-            save_checkpoint({
-                'epoch': self.args.epochs,
-                'arch': self.args.arch,
-                'state_dict': self.model.state_dict(),
-                'optimizer': self.optimizer.state_dict(),
-            }, is_best=False, filename=filename, wandb_name=self.args.wandb_name)
+            # log/evaluate every 5 epochs
+            if n_iter % self.args.log_every_n_steps == 0:
+                top1_test, top5_test = self.evaluate(train_loader, test_loader)
+
+                # log and print results
+                wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                            "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
+                            "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+                print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
+                
+                filename = os.path.join(model_checkpoints_folder, self.args.wandb_name) + ".pth.tar"
+                # save model checkpoints
+                save_checkpoint({
+                    'epoch': self.args.epochs,
+                    'arch': self.args.arch,
+                    'state_dict': self.model.state_dict(),
+                    'optimizer': self.optimizer.state_dict(),
+                }, is_best=False, filename=filename, wandb_name=self.args.wandb_name)
+            n_iter += 1
 
     def fit_linear_classifier(self, train_loader):
         scaler = GradScaler(enabled=self.args.fp16_precision)

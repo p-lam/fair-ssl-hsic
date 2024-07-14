@@ -1,0 +1,15 @@
+program: main.py
+name: simclr_sweep
+method: bayes
+metric:
+  goal: minimize
+  name: train_loss
+parameters:
+  lr:
+    distribution: uniform
+    min: 3e-3
+    max: 3e-1
+early_terminate:
+  type: hyperband
+  max_iter: 15
+  s: 2
