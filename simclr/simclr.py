@@ -77,13 +77,8 @@ class SimCLR(object):
                 scaler.scale(loss + loss_sup).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
-
-                train_bar.set_description('Training'.format(
-                                        epoch_counter, 
-                                        self.args.epochs, 
-                                    ))
-                
-            top1_train, top5_train = accuracy(pred, torch.cat([targets, targets]), topk=(1, 5))
+                top1_train, top5_train = accuracy(pred, torch.cat([targets, targets]), topk=(1, 5))
+                train_bar.set_description(f'[Training Epoch {epoch_counter}] Top1: {top1_train.item()}')
 
             # warmup for the first 10 epochs
             if epoch_counter >= 10:
@@ -112,7 +107,7 @@ class SimCLR(object):
     def fit_linear_classifier(self, train_loader):
         scaler = GradScaler(enabled=self.args.fp16_precision)
         
-        print('Linear Classifier Training...')
+        print('[Linear Classifier Training] ')
         for (name, param) in self.model.named_modules():
             if "fc" not in name:
                 param.eval()
@@ -124,7 +119,7 @@ class SimCLR(object):
         opt_fc = torch.optim.SGD(self.model.fc.parameters(), lr=0.3, weight_decay=1e-6, momentum=0.9)  
         schedule_fc = torch.optim.lr_scheduler.CosineAnnealingLR(opt_fc, T_max=FINETUNE_EPOCHS)  
 
-        FAST = True  # skip standard training (SGD with data augmentation) and just fit with sklearn
+        FAST = False  # skip standard training (SGD with data augmentation) and just fit with sklearn
         if FAST:
             X = []
             y = []
@@ -183,7 +178,7 @@ class SimCLR(object):
                     total_num += targs.shape[0]
                     top1_accuracy += top1[0]
                     top5_accuracy += top5[0]
-                    test_bar.set_description('Testing: ')
+                    test_bar.set_description('[Testing] ')
                 top1_accuracy /= (counter + 1)
                 top5_accuracy /= (counter + 1)
                 return top1_accuracy, top5_accuracy
