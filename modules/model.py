@@ -64,24 +64,18 @@ class SSL_HSIC(nn.Module):
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
                 scaler.update() 
-
+            
                 if n_iter % self.args.log_every_n_steps == 0:
                     top1_train, top5_train = accuracy(logits1, targets, topk=(1, 5))
-                    train_bar.set_description('Train Epoch: [{}/{}], lr: {:.6f}, Loss: {:.4f}, Acc1: {:.4f}'.format(
-                                                epoch_counter, 
-                                                self.args.epochs, 
-                                                self.scheduler.get_last_lr()[0],
-                                                loss.item(), 
-                                                top1_train.item()
-                                            ))
+                    train_bar.set_description(f'[Training Epoch {epoch_counter}] Top1: {top1_train.item()}')
                 n_iter += 1
-
-            top1_test, top5_test = self.evaluate(train_loader, test_loader)
 
             # warmup for the first 10 epochs
             if epoch_counter >= 10:
                 self.scheduler.step()
 
+            top1_test, top5_test = self.evaluate(train_loader, test_loader)
+        
             # log and print results
             wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
                        "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
@@ -96,7 +90,6 @@ class SSL_HSIC(nn.Module):
                 'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
             }, is_best=False, filename=filename, wandb_name=self.args.wandb_name)
-
 
         return loss, [feat_1, feat_2, proj_1, proj_2]
 
@@ -185,7 +178,6 @@ class Fair_SSL_HSIC(SSL_HSIC):
         super(Fair_SSL_HSIC, self).__init__(*args, **kwargs)
 
     def approximate_hsic_za(self, hidden, sens_att):
-        sens_att = F.one_hot(sens_att, num_classes=10)
         return hsic_regular(hidden, sens_att)
     
     def hsic_objective(self, z1, z2, idx, N, sens_att):

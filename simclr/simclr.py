@@ -77,32 +77,33 @@ class SimCLR(object):
                 scaler.scale(loss + loss_sup).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
-                top1_train, top5_train = accuracy(pred, torch.cat([targets, targets]), topk=(1, 5))
-                train_bar.set_description(f'[Training Epoch {epoch_counter}] Top1: {top1_train.item()}')
 
+                if n_iter % self.args.log_every_n_steps == 0:
+                    top1_train, top5_train = accuracy(pred, torch.cat([targets, targets]), topk=(1, 5))
+                    train_bar.set_description(f'[Training Epoch {epoch_counter}] Top1: {top1_train.item()}')
+                n_iter += 1 
+            
             # warmup for the first 10 epochs
             if epoch_counter >= 10:
                 self.scheduler.step()
 
-            # log/evaluate every 5 epochs
-            if n_iter % self.args.log_every_n_steps == 0:
-                top1_test, top5_test = self.evaluate(train_loader, test_loader)
+            top1_test, top5_test = self.evaluate(train_loader, test_loader)
 
-                # log and print results
-                wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
-                            "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
-                            "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
-                print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
-                
-                filename = os.path.join(model_checkpoints_folder, self.args.wandb_name) + ".pth.tar"
-                # save model checkpoints
-                save_checkpoint({
-                    'epoch': self.args.epochs,
-                    'arch': self.args.arch,
-                    'state_dict': self.model.state_dict(),
-                    'optimizer': self.optimizer.state_dict(),
-                }, is_best=False, filename=filename, wandb_name=self.args.wandb_name)
-            n_iter += 1
+            # log and print results
+            wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                        "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
+                        "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+            print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
+            
+            filename = os.path.join(model_checkpoints_folder, self.args.wandb_name) + ".pth.tar"
+            
+            # save model checkpoints
+            save_checkpoint({
+                'epoch': self.args.epochs,
+                'arch': self.args.arch,
+                'state_dict': self.model.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+            }, is_best=False, filename=filename, wandb_name=self.args.wandb_name)
 
     def fit_linear_classifier(self, train_loader):
         scaler = GradScaler(enabled=self.args.fp16_precision)
