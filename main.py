@@ -72,8 +72,10 @@ def parse_args():
 
 def main(config=None):
     args = parse_args()
+    # make sure we are using gpu
     args.device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {args.device}")
+    args.wandb_name = f"{args.wandb_name}_lr{args.lr}" # for sweep tracking
 
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
@@ -83,8 +85,6 @@ def main(config=None):
         name=f"{args.wandb_name}" if args.wandb_name is not None else None,
         config=args_dict
     )
-
-    args.wandb_name = f"{args.wandb_name}_lr{args.lr}"
 
     # load and transform data
     if args.dataset == "celeba":

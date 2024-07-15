@@ -13,13 +13,13 @@ parameters:
     max: 3e-1
   gamma:
     distribution: uniform
-    min: 0
-    max: 1
+    min: 1
+    max: 5
   lamb:
     distribution: uniform 
-    min: 0
-    max: 1
+    min: 1
+    max: 5
 early_terminate:
   type: hyperband
-  max_iter: 15
+  max_iter: 10
   s: 2
