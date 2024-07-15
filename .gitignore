@@ -5,3 +5,8 @@ __pycache__
 results/*
 wandb/*
 runs/*
+logs/*
+environment.yaml 
+jdy.batch 
+jdy2.batch
+gpu.batch 

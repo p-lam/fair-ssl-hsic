@@ -52,7 +52,11 @@ def parse_args():
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--start_epoch', default=1, type=int, help='Starting epoch')
+<<<<<<< HEAD
     parser.add_argument('--lamb', default=1, type=float, help='Regularization Coefficient')
+=======
+    parser.add_argument('--lamb', default=1.5, type=float, help='Regularization Coefficient')
+>>>>>>> 12b63ceea8d3dac9d6a83b03c562ed84e2d44b47
     parser.add_argument('--gamma', default=3, type=float, help='Regularization Coefficient')
     parser.add_argument('--hsic_type', default='regular', type=str, help='type of hsic approx: regular, normalized, normalized cca') 
     parser.add_argument('--n_views', default=2, type=int, help="number of augmentations for simclr/ssl") 
