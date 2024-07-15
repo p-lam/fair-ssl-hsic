@@ -275,7 +275,7 @@ if __name__ == '__main__':
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=2*args.batch_size, shuffle=False)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=2*args.batch_size, shuffle=False)
     else: 
-        train_set = ColoredMNISTVanilla(root='data', env='train', binary=False)
-        test_set = ColoredMNISTVanilla(root='data', env='test', binary=False)
+        train_set = ColoredMNIST(root='data', env='train', binary=False)
+        test_set = ColoredMNIST(root='data', env='test', binary=False)
         plot_dataset_digits(train_set)
         plot_dataset_digits(test_set, train=False)

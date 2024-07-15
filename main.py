@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument('--bn_splits', default=8, type=int, help='simulate multi-gpu behavior of BatchNorm in one gpu; 1 is SyncBatchNorm in multi-gpu')
     parser.add_argument('--results-dir', default='./results', type=str, metavar='PATH', help='path to cache (default: none)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')   
-    parser.add_argument('--log_every_n_steps', default=1, type=int) 
+    parser.add_argument('--log_every_n_steps', default=10, type=int) 
     parser.add_argument('--fp16_precision', action='store_true') 
     parser.add_argument('--device', default="cuda" if torch.cuda.is_available() else "cpu", type=str) 
     parser.add_argument("--wandb_name", default="train_1")
@@ -73,7 +73,8 @@ def parse_args():
 def main(config=None):
     args = parse_args()
     args.device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
-
+    print(f"Using device: {args.device}")
+    
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
     print(f"Saving to wandb under run name: {args.wandb_name}")

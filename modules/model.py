@@ -67,7 +67,7 @@ class SSL_HSIC(nn.Module):
             
                 if n_iter % self.args.log_every_n_steps == 0:
                     top1_train, top5_train = accuracy(logits1, targets, topk=(1, 5))
-                    train_bar.set_description(f'[Training Epoch {epoch_counter}] Top1: {top1_train.item()}')
+                    train_bar.set_description(f'[Training Epoch {epoch_counter}]')
                 n_iter += 1
 
             # warmup for the first 10 epochs
@@ -150,7 +150,7 @@ class SSL_HSIC(nn.Module):
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        self.fit_linear_classifier(train_loader)
+        # self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
         # calculate accuracy
@@ -178,7 +178,7 @@ class Fair_SSL_HSIC(SSL_HSIC):
         super(Fair_SSL_HSIC, self).__init__(*args, **kwargs)
 
     def approximate_hsic_za(self, hidden, sens_att):
-        return hsic_regular(hidden, sens_att)
+        return hsic_normalized_cca(hidden, sens_att)
     
     def hsic_objective(self, z1, z2, idx, N, sens_att):
         target = F.one_hot(idx, num_classes=N)

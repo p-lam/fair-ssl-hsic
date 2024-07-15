@@ -1,0 +1,25 @@
+program: main.py
+name: ssl_hsic_fair_sweep
+method: bayes
+metric:
+  goal: minimize
+  name: train_loss
+parameters:
+  model: 
+    values: ["fair-ssl-hsic"]
+  lr:
+    distribution: uniform
+    min: 3e-3
+    max: 3e-1
+  gamma:
+    distribution: uniform
+    min: 0
+    max: 1
+  lamb:
+    distribution: uniform 
+    min: 0
+    max: 1
+early_terminate:
+  type: hyperband
+  max_iter: 15
+  s: 2
