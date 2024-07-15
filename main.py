@@ -73,15 +73,19 @@ def parse_args():
 def main(config=None):
     args = parse_args()
     args.device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
-
+    print(f"using device: {args.device}")
+    
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
-    print(f"Saving to wandb under run name: {args.wandb_name}")
+    print(f"Saving to wandb under run name: {args.wandb_name}_lr_{args.lr}")
     wandb.init(
         project="SSL-HSIC",
-        name=f"{args.wandb_name}" if args.wandb_name is not None else None,
+        name=f"{args.wandb_name}_lr_{args.lr}" if args.wandb_name is not None else None,
         config=args_dict
     )
+
+    # change wandb name
+    args.wandb_name = f"simclr64_{args.lr}"
 
     # load and transform data
     if args.dataset == "celeba":

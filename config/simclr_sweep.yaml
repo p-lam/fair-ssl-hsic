@@ -7,9 +7,9 @@ metric:
 parameters:
   lr:
     distribution: uniform
-    min: 3e-3
+    min: 7e-3
     max: 3e-1
 early_terminate:
   type: hyperband
-  max_iter: 15
+  max_iter: 10
   s: 2

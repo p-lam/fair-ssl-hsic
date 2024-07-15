@@ -87,6 +87,9 @@ class SimCLR(object):
             if epoch_counter >= 10:
                 self.scheduler.step()
 
+            # if epoch_counter == (self.args.epochs)-1:
+            #     self.fit_linear_classifier(train_loader)
+
             top1_test, top5_test = self.evaluate(train_loader, test_loader)
 
             # log and print results
@@ -162,7 +165,7 @@ class SimCLR(object):
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        self.fit_linear_classifier(train_loader)
+        # self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
         # calculate accuracy
