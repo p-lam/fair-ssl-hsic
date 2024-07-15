@@ -215,10 +215,10 @@ class ColoredMNIST(datasets.VisionDataset):
                 im_array = np.array(im)
                 if idx < 40000: 
                     colored_arr, color = multicolor_grayscale_arr(im_array, target=label)
-                    train_set.append([Image.fromarray(colored_arr), label, color])
+                    train_set.append([Image.fromarray(colored_arr), label, color / 255.0 ])
                 else: 
                     colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
-                    test_set.append([Image.fromarray(colored_arr), label, color])
+                    test_set.append([Image.fromarray(colored_arr), label, color / 255.0])
 
         # save new data
         os.makedirs(colored_mnist_dir)

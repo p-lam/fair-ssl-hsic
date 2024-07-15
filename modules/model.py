@@ -178,7 +178,7 @@ class Fair_SSL_HSIC(SSL_HSIC):
         super(Fair_SSL_HSIC, self).__init__(*args, **kwargs)
 
     def approximate_hsic_za(self, hidden, sens_att):
-        return hsic_normalized_cca(hidden, sens_att)
+        return hsic_regular(hidden, sens_att)
     
     def hsic_objective(self, z1, z2, idx, N, sens_att):
         target = F.one_hot(idx, num_classes=N)

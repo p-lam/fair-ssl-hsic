@@ -52,8 +52,8 @@ def parse_args():
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
     parser.add_argument('--start_epoch', default=1, type=int, help='Starting epoch')
-    parser.add_argument('--lamb', default=0.5, type=int, help='Regularization Coefficient')
-    parser.add_argument('--gamma', default=0.7, type=int, help='Regularization Coefficient')
+    parser.add_argument('--lamb', default=1.5, type=int, help='Regularization Coefficient')
+    parser.add_argument('--gamma', default=3, type=int, help='Regularization Coefficient')
     parser.add_argument('--hsic_type', default='regular', type=str, help='type of hsic approx: regular, normalized, normalized cca') 
     parser.add_argument('--n_views', default=2, type=int, help="number of augmentations for simclr/ssl") 
     parser.add_argument('--temperature', default=0.07, type=float, help="contrastive temperature") 
@@ -74,7 +74,7 @@ def main(config=None):
     args = parse_args()
     args.device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {args.device}")
-    
+
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
     print(f"Saving to wandb under run name: {args.wandb_name}")
@@ -83,6 +83,8 @@ def main(config=None):
         name=f"{args.wandb_name}" if args.wandb_name is not None else None,
         config=args_dict
     )
+
+    args.wandb_name = f"{args.wandb_name}_lr{args.lr}"
 
     # load and transform data
     if args.dataset == "celeba":
