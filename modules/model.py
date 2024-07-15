@@ -58,6 +58,9 @@ class SSL_HSIC(nn.Module):
                     feat_2, proj_2 = self.l2_norm(z2), self.l2_norm(logits2)
                     # t1 = time.time()
                     loss = self.hsic_objective(feat_1, feat_2, idx, N, sens_att=sens_att)
+                    if torch.isnan(loss):
+                        wandb.alert(f'Loss is NaN')     # Will alert you via email or slack that your metric has reached NaN
+                        raise Exception(f'Loss is NaN') # This could be exchanged for exit(1) if you do not want a traceback
                     # print(f"Objective took {time.time() - t1} to evaluate")
 
                 self.optimizer.zero_grad()
