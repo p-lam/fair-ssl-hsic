@@ -162,7 +162,7 @@ class SimCLR(object):
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        self.fit_linear_classifier(train_loader)
+        # self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
         # calculate accuracy
