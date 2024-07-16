@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torchvision.transforms import transforms
 from torchvision import transforms, datasets
-from dataloader import ColoredMNIST
+from datasets.cmnist import ColoredMNIST
 
 np.random.seed(0)
 

@@ -13,14 +13,14 @@ import wandb
 
 from copy import deepcopy
 from math import ceil
-from dataloader import get_celeba_dataset, ColoredMNIST
 from tqdm import tqdm
 from utils import *
 from modules.model import SSL_HSIC, Fair_SSL_HSIC, Model
 from simclr.simclr import SimCLR
 from torch.cuda.amp import GradScaler, autocast
-# from simclr.resnet_simclr import ResNetSimCLR
 from sklearn.linear_model import LogisticRegression
+from datasets.cmnist import ColoredMNIST
+from datasets.celeba import get_celeba_dataset
 
 # locating dataset folder(s)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +37,7 @@ models = {"simclr": SimCLR,
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Fair SSL-HSIC')
     # dataset arguments
-    parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba, cifar10)', choices=['cmnist', 'celeb', 'cifar10'])    
+    parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba, dsprites)', choices=['cmnist', 'celeb', 'dsprites'])    
     parser.add_argument("--data", help='path for loading data', default='data', type=str)
     # model arguments
     parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
@@ -67,7 +67,6 @@ def parse_args():
     parser.add_argument("--wandb_name", default="train_1")
     # parse and return args
     args = parser.parse_args()
-
     return args
 
 def main(config=None):
@@ -103,7 +102,9 @@ def main(config=None):
         dataset_type = ColoredMNIST 
         train_dataset = dataset_type(root='data', env='train', n_views=args.n_views)
         test_dataset = dataset_type(root='data', env='test', n_views=1) 
-
+    elif args.dataset == "dsprites":
+        pass 
+    
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
