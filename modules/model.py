@@ -26,15 +26,45 @@ class SSL_HSIC(nn.Module):
     def l2_norm(self, x):
         return torch.nn.functional.normalize(x, p=2.0, dim=1, eps=1e-12, out=None)
 
-    def approximate_hsic_zy(self, hidden, h_target, k_type_y='linear'):
-        return hsic_regular(hidden, h_target, k_type_y=k_type_y)
+    def approximate_hsic_zy(self, feat, batch_size, N, m=2):
+        """approximation of Unbiased HSIC(X, Y).
+        args:
+            z1: features from transformed image 1 
+            z2: features from transformed image 2 
+            batch_size: number of samples in batch
+            N: total number of samples 
+            m: number of positive samples (default: 2)
+        """
+        delta_l = get_label_weights(batch_size)
+        scale = delta_l / N
+        # similar to simclr code, except we are taking the gaussian kernel
+        labels = torch.cat([torch.arange(self.args.batch_size) for i in range(self.args.n_views)], dim=0)
+        labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
+        labels = labels.to(self.args.device)
+        similarity_matrix = compute_gaussian_kernel(feat, feat)
+
+        # discard the main diagonal from both: labels and similarities matrix
+        mask = torch.eye(labels.shape[0], dtype=torch.bool).to(self.args.device)
+        labels = labels[~mask].view(labels.shape[0], -1)
+        similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+
+        # select and combine multiple positives
+        positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+
+        # select only the negatives the negatives
+        negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+
+        # calculate the hsic(z,y) estimator
+        term_1 = positives.sum() / (batch_size * m * (m-1))
+        term_2 =  negatives.sum() / (batch_size**2) * (m**2)
+        term_3 = 1 / (m-1)
+        return  scale * (term_1 - term_2 - term_3)
 
     def approximate_hsic_zz(self, z1, z2):
         return hsic_regular(z1, z2)
 
-    def hsic_objective(self, z1, z2, idx, N, sens_att=None):
-        target = F.one_hot(idx, num_classes=N)
-        hsic_zy = self.approximate_hsic_zy(z1, target, k_type_y='linear')
+    def hsic_objective(self, z, z1, z2, batch_size, N, sens_att=None):
+        hsic_zy = self.approximate_hsic_zy(z, batch_size, N)
         hsic_zz = self.approximate_hsic_zz(z1, z2)
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) 
 
@@ -49,15 +79,22 @@ class SSL_HSIC(nn.Module):
             for images, targets, sens_att, idx in train_bar:
                 im1, im2 = images[0], images[1] 
                 im1, im2 = im1.to(self.args.device), im2.to(self.args.device)
+                images = torch.cat(images, dim=0)
+                images = images.to(self.args.device)
                 targets = targets.to(self.args.device)
-
+          
                 with autocast(enabled=self.args.fp16_precision):
                     z1, mlp_feats1, logits1 = self.model(im1)
                     z2, mlp_feats2, logits2 = self.model(im2) 
-                    feat_1, proj_1 = self.l2_norm(z1), self.l2_norm(logits1)
-                    feat_2, proj_2 = self.l2_norm(z2), self.l2_norm(logits2)
+                    z, mlp_feats, logits = self.model(images)
+
+                    feat_1, proj_1 = self.l2_norm(mlp_feats1), self.l2_norm(logits1)
+                    feat_2, proj_2 = self.l2_norm(mlp_feats2), self.l2_norm(logits2)
+                    feat, proj = self.l2_norm(mlp_feats), self.l2_norm(logits)
+
                     # t1 = time.time()
-                    loss = self.hsic_objective(feat_1, feat_2, idx, N, sens_att=sens_att)
+                    loss = self.hsic_objective(feat, feat_1, feat_2, self.args.batch_size, len(train_loader), sens_att=sens_att)
+                    
                     if torch.isnan(loss):
                         wandb.alert(title='Nan loss', text='Loss is NaN')     # Will alert you via email or slack that your metric has reached NaN
                         raise Exception(f'Loss is NaN') # This could be exchanged for exit(1) if you do not want a traceback
@@ -147,13 +184,14 @@ class SSL_HSIC(nn.Module):
                     scaler.update()
                 schedule_fc.step()
 
-    def evaluate(self, train_loader, test_loader):
+    def evaluate(self, train_loader, test_loader, epoch):
         """
         test using a linear classifier on top of backbone features
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        # self.fit_linear_classifier(train_loader)
+        if epoch == self.args.epochs:
+            self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
         # calculate accuracy
@@ -183,12 +221,11 @@ class Fair_SSL_HSIC(SSL_HSIC):
     def approximate_hsic_za(self, hidden, sens_att):
         return hsic_regular(hidden, sens_att)
     
-    def hsic_objective(self, z1, z2, idx, N, sens_att):
-        target = F.one_hot(idx, num_classes=N)
-        hsic_zy = self.approximate_hsic_zy(z1, target, k_type_y='linear')
+    def hsic_objective(self, z, z1, z2, batch_size, N, sens_att):
+        hsic_zy = self.approximate_hsic_zy(z, batch_size, N)
         hsic_zz = self.approximate_hsic_zz(z1, z2)
         hsic_za = self.approximate_hsic_za(z1, sens_att)
-        return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) - self.args.lamb*hsic_za
+        return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     
 class Model(nn.Module):
     """

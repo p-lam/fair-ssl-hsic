@@ -88,7 +88,7 @@ def distcorr(X, sigma=1.0):
     X = torch.exp( -X / (2.*sigma*sigma))
     return torch.mean(X)
 
-def compute_kernel(x, y):
+def compute_gaussian_kernel(x, y):
     x_size = x.size(0)
     y_size = y.size(0)
     dim = x.size(1)
@@ -268,6 +268,47 @@ def calculate_interact_hsic(z_list1, z_list2, args):
         total_interact_hsic += lx * hsic_normalized_cca(z1, z2, sigma=args.sigma)
     return total_interact_hsic
 
+"""
+SSL-HSIC specific
+"""
+def get_label_weights(batch):
+    """
+    assume linear kernel
+    returns the positive and negative weights of the label kernel matrix.
+    """
+    w_pos_base = torch.atleast_2d(torch.tensor(1.0))
+    w_neg_base = torch.atleast_2d(torch.tensor(0.0))
+    w_mean = (w_pos_base + w_neg_base * (batch - 1)) / batch
+    w_pos_base -= w_mean
+    w_neg_base -= w_mean
+    w_mean = (w_pos_base + w_neg_base * (batch - 1)) / batch
+    w_pos = w_pos_base - w_mean
+    w_neg = w_neg_base - w_mean
+    return w_pos.item() - w_neg.item()
+
+
+def approximate_hsic_xy(imgs, N, batch_size, z1, z2, m=2, k="gaussian"):
+    """approximation of Unbiased HSIC(X, Y).
+    args:
+        N: total number of samples 
+        batch_size: number of samples in batch
+        z1: features from transformed image 1 
+        z2: features from transformed image 2 
+        m: number of positive samples (default: 2)
+        k: kernel type (default: gaussian)
+    """
+    delta_l = get_label_weights(batch_size)
+    scale = delta_l / N
+    mean1, mean2 = 0.0, 0.0
+    for i in enumerate(imgs):
+        k1 = compute_gaussian_kernel(z1, z2)
+        mean1 += k1
+        k2 = compute_gaussian_kernel(z1[i], z2[i+1])
+        mean2 += k2
+    term_1 = mean1 / (batch_size * m * (m-1))
+    term_2 =  mean2 / (batch_size**2) * (m**2)
+    term_3 = 1 / (m-1)
+    return  scale * (term_1 - term_2 - term_3)
 
 if __name__ == "__main__":
     x = torch.randn(size=(2, 5))
