@@ -163,7 +163,7 @@ class SimCLR(object):
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
         if epoch == self.args.epochs:
-            self.fit_linear_classifier(train_loader)
+            self.fit_linear_classifier(train_loader) - 1
         test_bar = tqdm(test_loader)
 
         # calculate accuracy

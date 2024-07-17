@@ -190,7 +190,7 @@ class SSL_HSIC(nn.Module):
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        if epoch == self.args.epochs:
+        if epoch == (self.args.epochs - 1):
             self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 

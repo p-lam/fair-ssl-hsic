@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument('--hsic_type', default='regular', type=str, help='type of hsic approx: regular, normalized, normalized cca') 
     parser.add_argument('--n_views', default=2, type=int, help="number of augmentations for simclr/ssl") 
     parser.add_argument('--temperature', default=0.07, type=float, help="contrastive temperature") 
-    parser.add_argument('--color', action='store_false')
+    parser.add_argument('--color_jitter', action='store_true')
     # misc arguments
     parser.add_argument('--bn_splits', default=8, type=int, help='simulate multi-gpu behavior of BatchNorm in one gpu; 1 is SyncBatchNorm in multi-gpu')
     parser.add_argument('--results-dir', default='./results', type=str, metavar='PATH', help='path to cache (default: none)')
@@ -79,6 +79,7 @@ def main(config=None):
 
     # sanity check
     print(f"Using color jitter: {args.color_jitter}")
+
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
     print(f"Saving to wandb under run name: {args.wandb_name}")
