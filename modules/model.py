@@ -114,7 +114,7 @@ class SSL_HSIC(nn.Module):
             if epoch_counter >= 10:
                 self.scheduler.step()
 
-            top1_test, top5_test = self.evaluate(train_loader, test_loader)
+            top1_test, top5_test = self.evaluate(train_loader, test_loader, epoch_counter)
         
             # log and print results
             wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 

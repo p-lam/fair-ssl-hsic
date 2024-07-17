@@ -72,18 +72,27 @@ class ColoredMNIST(datasets.VisionDataset):
     }
     
 
-    def __init__(self, root='data', env='train', binary=False, n_views=2):
+    def __init__(self, root='data', env='train', binary=False, n_views=2, color_jitter=False, s=1):
         super(ColoredMNIST, self).__init__(root,)
         self.prepare_colored_mnist(binary=binary)
         test_transform = t.Compose([    t.ToTensor(),
                                         t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-    
-        train_transform =  t.Compose([  t.RandomResizedCrop(size=28, scale=(0.8, 1.)),
-                                        t.RandomRotation(15),
-                                        t.ToTensor(),
-                                        t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-                                        ])
+        if color_jitter: 
+            color_jitter = t.ColorJitter(0.8 * s, 0.8 * s, 0.8 * s, 0.2 * s)
+            train_transform =  t.Compose([  t.RandomResizedCrop(size=28, scale=(0.8, 1.)),
+                                            t.RandomRotation(15),
+                                            t.RandomApply([color_jitter], p=0.8),
+                                            t.RandomGrayscale(p=0.2),
+                                            t.ToTensor(),
+                                            t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                                            ])
+        else: 
+            train_transform =  t.Compose([  t.RandomResizedCrop(size=28, scale=(0.8, 1.)),
+                                            t.RandomRotation(15),
+                                            t.ToTensor(),
+                                            t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                                            ])
         self.transform = train_transform if env == "train" else test_transform 
         self.n_views = n_views
         

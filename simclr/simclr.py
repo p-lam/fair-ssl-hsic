@@ -87,7 +87,7 @@ class SimCLR(object):
             if epoch_counter >= 10:
                 self.scheduler.step()
 
-            top1_test, top5_test = self.evaluate(train_loader, test_loader)
+            top1_test, top5_test = self.evaluate(train_loader, test_loader, epoch_counter)
 
             # log and print results
             wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
@@ -156,13 +156,14 @@ class SimCLR(object):
                     scaler.update()
                 schedule_fc.step()
 
-    def evaluate(self, train_loader, test_loader):
+    def evaluate(self, train_loader, test_loader, epoch):
         """
         test using a linear classifier on top of backbone features
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        # self.fit_linear_classifier(train_loader)
+        if epoch == self.args.epochs:
+            self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
         # calculate accuracy
