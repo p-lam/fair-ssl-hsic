@@ -9,4 +9,6 @@ logs/*
 environment.yaml 
 jdy.batch 
 jdy2.batch
+jdy3.batch
+jdy4.batch
 gpu.batch 
