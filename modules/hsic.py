@@ -155,9 +155,10 @@ def hsic_regular(x, y, sigma=None, use_cuda=True, to_numpy=False, k_type_y='gaus
     """
     """
     Kxc = kernelmat(x, sigma)
-    Kyc = kernelmat(y, sigma, k_type=k_type_y)
+    Kyc = kernelmat(y, sigma)
     KtK = torch.mul(Kxc, Kyc.t())
-    Pxy = torch.mean(KtK)
+    Pxy = torch.trace(Kxc @ Kyc) / ((x.size(0) - 1) ** 2)
+
     return Pxy
 
 def hsic_normalized(x, y, sigma=None, use_cuda=True, to_numpy=True, k_type_y='linear'):

@@ -16,7 +16,7 @@ from pathlib import Path
 from math import ceil
 
 # point $DATA_ROOT to location of CelebA folder
-DATA_ROOT = os.environ["DATA_ROOT"]
+# DATA_ROOT = os.environ["DATA_ROOT"]
 
 """
 CelebA helpers

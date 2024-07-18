@@ -36,7 +36,8 @@ class SSL_HSIC(nn.Module):
             m: number of positive samples (default: 2)
         """
         delta_l = get_label_weights(batch_size)
-        scale = delta_l / N
+        scale = delta_l
+        
         # similar to simclr code, except we are taking the gaussian kernel
         labels = torch.cat([torch.arange(self.args.batch_size) for i in range(self.args.n_views)], dim=0)
         labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
@@ -56,27 +57,43 @@ class SSL_HSIC(nn.Module):
 
         # calculate the hsic(z,y) estimator
         term_1 = positives.sum() / (batch_size * m * (m-1))
-        term_2 =  negatives.sum() / (batch_size**2) * (m**2)
+        term_2 =  negatives.sum() / (batch_size**2 * m**2)
         term_3 = 1 / (m-1)
+
+        if torch.isnan(scale * (term_1 - term_2 - term_3)):
+            print(f"scale {scale}, term1 {term_1}, term2 {term_2}")
+            print(f"positives {positives.shape}, {positives.sum()}, negatives {negatives.shape}, {negatives.sum()}")
         return  scale * (term_1 - term_2 - term_3)
 
     def approximate_hsic_zz(self, z1, z2):
+        if (torch.isnan(hsic_regular(z1, z2))):
+            print("this is nan")
+        # return hsic_normalized_cca(z1, z2)
         return hsic_regular(z1, z2)
 
     def hsic_objective(self, z, z1, z2, batch_size, N, sens_att=None):
         hsic_zy = self.approximate_hsic_zy(z, batch_size, N)
-        hsic_zz = self.approximate_hsic_zz(z1, z2)
+        hsic_zz = self.approximate_hsic_zz(z, z)       
+        # print(f"HSIC(Z;Y): {hsic_zy}")
+        # print(f"HSIC(Z;Z): {hsic_zz}")
+        # for p in self.model.parameters():
+        #     print(torch.autograd.grad(hsic_zy, p))
+        #     break
+
+        if (torch.isnan(torch.sqrt(hsic_zz))):
+            print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted (?)")
+
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) 
 
     def train(self, train_loader, test_loader, N):
-        scaler = GradScaler(enabled=self.args.fp16_precision)
+        # scaler = GradScaler(enabled=self.args.fp16_precision)
         model_checkpoints_folder = self.args.results_dir
         if not os.path.exists(model_checkpoints_folder):
             os.makedirs(model_checkpoints_folder)
         n_iter, train_bar = 0, tqdm(train_loader)
 
         for epoch_counter in range(self.args.epochs):
-            for images, targets, sens_att, idx in train_bar:
+            for images, targets, sens_att, _ in train_bar:
                 im1, im2 = images[0], images[1] 
                 im1, im2 = im1.to(self.args.device), im2.to(self.args.device)
                 images = torch.cat(images, dim=0)
@@ -101,10 +118,9 @@ class SSL_HSIC(nn.Module):
                     # print(f"Objective took {time.time() - t1} to evaluate")
                         
                 self.optimizer.zero_grad()
-                scaler.scale(loss).backward()
-                scaler.step(self.optimizer)
-                scaler.update() 
-            
+                loss.backward()
+                self.optimizer.step()
+
                 if n_iter % self.args.log_every_n_steps == 0:
                     top1_train, top5_train = accuracy(logits1, targets, topk=(1, 5))
                     train_bar.set_description(f'[Training Epoch {epoch_counter}]')
