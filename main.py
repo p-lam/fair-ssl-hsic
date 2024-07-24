@@ -37,15 +37,15 @@ models = {"simclr": SimCLR,
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Fair SSL-HSIC')
     # dataset arguments
-    parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba, dsprites)', choices=['cmnist', 'celeb', 'dsprites'])    
+    parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba, dsprites)', choices=['cmnist', 'celeba', 'dsprites'])    
     parser.add_argument("--data", help='path for loading data', default='data', type=str)
     # model arguments
     parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
     parser.add_argument('--model', default='simclr', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic', 'supervised'])
     parser.add_argument('-a', '--arch', default='resnet18', help='resnet architecture')
     # training args/hyperparameters
-    parser.add_argument('--lr', '--learning-rate', default=3e-2, type=float, metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--wd', default=1e-4, type=float, metavar='W', help='weight decay')
+    parser.add_argument('--lr', '--learning-rate', default=0.3, type=float, metavar='LR', help='initial learning rate', dest='lr')
+    parser.add_argument('--wd', default=1e-6, type=float, metavar='W', help='weight decay')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
@@ -87,10 +87,6 @@ def main(config=None):
     # load and transform data
     if args.dataset == "celeba":
         train_dataset, val_dataset, test_dataset = get_celeba_dataset(n_views=args.n_views)
-        # set training/testing augmentations for the datasets
-        train_dataset.dataset.set_transform_mode(train=True)
-        val_dataset.dataset.set_transform_mode(train=False)
-        test_dataset.dataset.set_transform_mode(train=False)
     elif args.dataset == "cmnist": 
         dataset_type = ColoredMNIST 
         train_dataset = dataset_type(root='data', env='train', n_views=args.n_views, color_jitter=args.color_jitter)
@@ -104,7 +100,7 @@ def main(config=None):
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) 
 
     # load model
-    model = Model(feature_dim=args.feature_dim).to(args.device)
+    model = Model().to(args.device)
 
     with wandb.init(config=config):
         config = wandb.config 

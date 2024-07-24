@@ -234,30 +234,34 @@ class Fair_SSL_HSIC(SSL_HSIC):
     def hsic_objective(self, z, z1, z2, batch_size, sens_att):
         hsic_zy = self.approximate_hsic_zy(z, batch_size)
         hsic_zz = self.approximate_hsic_zz(z, z)
-        hsic_za = self.approximate_hsic_za(z1, sens_att)
+        hsic_za = self.approximate_hsic_za(z1, sens_att.unsqueeze(1))
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     
 class Model(nn.Module):
     """
-    Common CIFAR ResNet recipe.
-    Comparing with ImageNet ResNet recipe, it:
+    Standard ResNet recipe supporting small-scale variant which optionally:
     (i) replaces conv1 with kernel=3, str=1
     (ii) removes pool1
     """
-    def __init__(self, num_classes=10, feature_dim=128, arch=None, bn_splits=8):
+    def __init__(self, num_classes=10, feature_dim=[256, 128], arch=None, bn_splits=8, small=False):
         super(Model, self).__init__()
         self.f = []
         for name, module in resnet18().named_children():
-            if name == 'conv1':
+            if name == 'conv1' and small:  # adjust conv1 if using small-size image dataset
                 module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-            if not isinstance(module, nn.Linear) and not isinstance(module, nn.MaxPool2d):
+            if isinstance(module, nn.MaxPool2d) and small:  # skip pool1
+                module = nn.Identity()
+            if not isinstance(module, nn.Linear):  # ignore fc layer in all cases
                 self.f.append(module)
         # pool
         self.pool = nn.AdaptiveAvgPool2d(1)
         # encoder
         self.f = nn.Sequential(*self.f)
         # projection head
-        self.g = nn.Sequential(nn.Linear(512, feature_dim, bias=False), nn.ReLU())
+        if len(feature_dim) == 1:  # linear+relu projection 
+            self.g = nn.Sequential(nn.Linear(512, feature_dim[0], bias=False), nn.ReLU())
+        else:  # two hidden layer mlp
+            self.g = nn.Sequential(nn.Linear(512, feature_dim[0], bias=False), nn.ReLU(), nn.Linear(feature_dim[0], feature_dim[1], bias=False), nn.ReLU())
         self.fc = nn.Linear(512, num_classes)
 
     def forward(self, x):
@@ -266,4 +270,3 @@ class Model(nn.Module):
         out = self.g(x)
         logits = self.fc(x.detach())
         return x, F.normalize(out, dim=-1), logits
-    
