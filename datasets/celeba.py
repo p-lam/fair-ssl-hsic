@@ -16,7 +16,7 @@ from pathlib import Path
 from math import ceil
 
 # point $DATA_ROOT to location of CelebA folder
-# DATA_ROOT = os.environ["DATA_ROOT"]
+DATA_ROOT = os.environ["DATA_ROOT"]
 
 """
 CelebA helpers
@@ -68,26 +68,23 @@ class CelebADataset(Dataset):
             imgs = imgs[0]
         label = np.array(self.label.iloc[idx][1:])[20]  # male
         sen_attr = np.array(self.label.iloc[idx][1:])[-1]  # young
-        return imgs, label, sen_attr, idx
+        return imgs, label, sen_attr
 
-def get_celeba_dataset(n_views=1):
+def get_celeba_dataset(batch_size, n_views=1):
     root = Path(DATA_ROOT)/"KaggleCeleb"
     anno_path = root / "list_attr_celeba.csv"
     dataset = CelebADataset(root, anno_path, n_views=n_views)
-    return dataset
+    train_size = ceil(0.64 * len(dataset))
+    val_size = ceil(0.16 * len(dataset))
+    test_size = len(dataset) - (train_size+val_size)
+    train_, test_dataset = torch.utils.data.random_split(dataset, [train_size+val_size, test_size])
+    train_dataset, val_dataset = torch.utils.data.random_split(train_, [train_size, val_size])
+    return train_dataset, val_dataset, test_dataset
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Dataloader Test')
-    parser.add_argument('--batch_size', default=512, type=int, help='Number of images in each mini-batch')
-
-    # test if dataset code is working / plot datasets
+    parser.add_argument('--batch_size', default=256, type=int, help='Number of images in each mini-batch')
     args = parser.parse_args()
-    celeba = get_celeba_dataset()
-    train_size = ceil(0.70 * len(celeba))
-    val_size = ceil(0.10 * len(celeba))
-    test_size = len(celeba) - (train_size+val_size)
-    train, test_dataset = torch.utils.data.random_split(celeba, [train_size+val_size, test_size])
-    train_dataset, val_dataset = torch.utils.data.random_split(train, [train_size, val_size])
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=2*args.batch_size, shuffle=False)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=2*args.batch_size, shuffle=False)
+    # test if dataset code is working / plot datasets
+    train_dataset, val_dataset, test_dataset = get_celeba_dataset(args.batch_size, n_views=2)
+    print("complete")

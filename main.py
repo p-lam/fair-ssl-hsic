@@ -46,8 +46,6 @@ def parse_args():
     # training args/hyperparameters
     parser.add_argument('--lr', '--learning-rate', default=3e-2, type=float, metavar='LR', help='initial learning rate', dest='lr')
     parser.add_argument('--wd', default=1e-4, type=float, metavar='W', help='weight decay')
-    parser.add_argument('--cos', action='store_true', help='use cosine lr schedule')
-    parser.add_argument('--schedule', default=[600, 900], nargs='*', type=int, help='learning rate schedule (when to drop lr by 10x); does not take effect if --cos is on')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
@@ -77,9 +75,6 @@ def main(config=None):
     print(f"Using device: {args.device}")
     args.wandb_name = f"{args.wandb_name}_lr{args.lr}" # for sweep tracking
 
-    # sanity check
-    print(f"Using color jitter: {args.color_jitter}")
-
     # setup tracking in wandb
     args_dict = deepcopy(vars(args)) 
     print(f"Saving to wandb under run name: {args.wandb_name}")
@@ -91,13 +86,7 @@ def main(config=None):
 
     # load and transform data
     if args.dataset == "celeba":
-        dataset = get_celeba_dataset(n_views=args.n_views)
-        # split dataset into train/val/test
-        train_size = ceil(0.70 * len(dataset))
-        val_size = ceil(0.10 * len(dataset))
-        test_size = len(dataset) - (train_size+val_size)
-        train_, test_dataset = torch.utils.data.random_split(dataset, [train_size+val_size, test_size])
-        train_dataset, val_dataset = torch.utils.data.random_split(train_, [train_size, val_size])
+        train_dataset, val_dataset, test_dataset = get_celeba_dataset(n_views=args.n_views)
         # set training/testing augmentations for the datasets
         train_dataset.dataset.set_transform_mode(train=True)
         val_dataset.dataset.set_transform_mode(train=False)
@@ -105,17 +94,14 @@ def main(config=None):
     elif args.dataset == "cmnist": 
         dataset_type = ColoredMNIST 
         train_dataset = dataset_type(root='data', env='train', n_views=args.n_views, color_jitter=args.color_jitter)
+        val_dataset = dataset_type(root='data', env='val', n_views=1)
         test_dataset = dataset_type(root='data', env='test', n_views=1) 
     elif args.dataset == "dsprites":
         pass 
     
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-    if args.dataset != "cmnist":
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) 
-    else:
-        print("Validation set not implemented!")
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) 
 
     # load model
     model = Model(feature_dim=args.feature_dim).to(args.device)
@@ -128,7 +114,6 @@ def main(config=None):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
         # define loss criterion
         criterion = torch.nn.CrossEntropyLoss().to(args.device)
-
         # load model if needed 
         if args.resume != '':
             checkpoint = torch.load(args.resume)
@@ -136,18 +121,16 @@ def main(config=None):
             optimizer.load_state_dict(checkpoint['optimizer'])
             args.start_epoch = checkpoint['epoch'] + 1
             print('Loaded from: {}'.format(args.resume))
-
         # logging
         if not os.path.exists(args.results_dir):
             os.mkdir(args.results_dir)
 
-        # training loop (TODO: clean up)
-        dataset_len = len(train_dataset) + len(test_dataset)
+        # training loop 
         if args.model != "supervised":
             net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-            net.train(train_loader, test_loader, N=dataset_len)
+            net.train(train_loader, test_loader, val_loader)
         else:
-            # training loop
+            # supervised baseline
             for epoch in range(args.epochs):
                 loss, top1_train, top5_train = train(model, args, epoch, train_loader, criterion, optimizer, scheduler)
                 top1_test, top5_test = test(model, args, test_loader)
@@ -159,7 +142,8 @@ def main(config=None):
                 print(f"[Epoch {epoch}/{args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
                 # save model
                 torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, args.results_dir + '/model_last.pth')
-            
+        
+        # dump args
         with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
             args = vars(args)
             try:

@@ -26,17 +26,10 @@ class SSL_HSIC(nn.Module):
     def l2_norm(self, x):
         return torch.nn.functional.normalize(x, p=2.0, dim=1, eps=1e-12, out=None)
 
-    def approximate_hsic_zy(self, feat, batch_size, N, m=2):
+    def approximate_hsic_zy(self, feat, batch_size, m=2):
         """approximation of Unbiased HSIC(X, Y).
-        args:
-            z1: features from transformed image 1 
-            z2: features from transformed image 2 
-            batch_size: number of samples in batch
-            N: total number of samples 
-            m: number of positive samples (default: 2)
         """
-        delta_l = get_label_weights(batch_size)
-        scale = delta_l
+        scale = get_label_weights(batch_size)
         
         # similar to simclr code, except we are taking the gaussian kernel
         labels = torch.cat([torch.arange(self.args.batch_size) for i in range(self.args.n_views)], dim=0)
@@ -68,24 +61,17 @@ class SSL_HSIC(nn.Module):
     def approximate_hsic_zz(self, z1, z2):
         if (torch.isnan(hsic_regular(z1, z2))):
             print("this is nan")
-        # return hsic_normalized_cca(z1, z2)
         return hsic_regular(z1, z2)
 
-    def hsic_objective(self, z, z1, z2, batch_size, N, sens_att=None):
-        hsic_zy = self.approximate_hsic_zy(z, batch_size, N)
+    def hsic_objective(self, z, z1, z2, batch_size, sens_att=None):
+        hsic_zy = self.approximate_hsic_zy(z, batch_size)
         hsic_zz = self.approximate_hsic_zz(z, z)       
-        # print(f"HSIC(Z;Y): {hsic_zy}")
-        # print(f"HSIC(Z;Z): {hsic_zz}")
-        # for p in self.model.parameters():
-        #     print(torch.autograd.grad(hsic_zy, p))
-        #     break
-
         if (torch.isnan(torch.sqrt(hsic_zz))):
             print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted (?)")
 
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) 
 
-    def train(self, train_loader, test_loader, N):
+    def train(self, train_loader, test_loader, val_loader):
         # scaler = GradScaler(enabled=self.args.fp16_precision)
         model_checkpoints_folder = self.args.results_dir
         if not os.path.exists(model_checkpoints_folder):
@@ -93,7 +79,7 @@ class SSL_HSIC(nn.Module):
         n_iter, train_bar = 0, tqdm(train_loader)
 
         for epoch_counter in range(self.args.epochs):
-            for images, targets, sens_att, _ in train_bar:
+            for images, targets, sens_att in train_bar:
                 im1, im2 = images[0], images[1] 
                 im1, im2 = im1.to(self.args.device), im2.to(self.args.device)
                 images = torch.cat(images, dim=0)
@@ -110,7 +96,7 @@ class SSL_HSIC(nn.Module):
                     feat, proj = self.l2_norm(mlp_feats), self.l2_norm(logits)
 
                     # t1 = time.time()
-                    loss = self.hsic_objective(feat, feat_1, feat_2, self.args.batch_size, len(train_loader), sens_att=sens_att)
+                    loss = self.hsic_objective(feat, feat_1, feat_2, self.args.batch_size, sens_att=sens_att)
                     
                     if torch.isnan(loss):
                         wandb.alert(title='Nan loss', text='Loss is NaN')     # Will alert you via email or slack that your metric has reached NaN
@@ -130,13 +116,21 @@ class SSL_HSIC(nn.Module):
             if epoch_counter >= 10:
                 self.scheduler.step()
 
-            top1_test, top5_test = self.evaluate(train_loader, test_loader, epoch_counter)
-        
-            # log and print results
-            wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
-                       "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
-                       "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
-            print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
+            # linear evaluation for final epoch
+            if epoch_counter == (self.args.epochs - 1):
+                top1_test, top5_test = self.evaluate(train_loader, test_loader, epoch_counter)
+                # log and print results
+                wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                        "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
+                        "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+                print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Final Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
+            else:  # otherwise just evaluate normally on validation set
+                top1_test, top5_test = self.evaluate(train_loader, val_loader, epoch_counter) 
+                # log and print results
+                wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
+                        "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
+                        "val_top1_acc": top1_test.item(), "val_top5_acc": top5_test.item()})
+                print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Val Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
 
             filename = os.path.join(model_checkpoints_folder, self.args.wandb_name) + ".pth.tar"
             # save model checkpoints
@@ -168,7 +162,7 @@ class SSL_HSIC(nn.Module):
         if FAST:
             X = []
             y = []
-            for images, targets, _, _ in train_loader:
+            for images, targets, _ in train_loader:
                 images = images[0]
                 images = images.to(self.args.device)
 
@@ -213,7 +207,7 @@ class SSL_HSIC(nn.Module):
         # calculate accuracy
         with torch.no_grad():
             with autocast(enabled=self.args.fp16_precision):
-                for counter, [imgs, targs, _, _] in enumerate(test_bar): 
+                for counter, [imgs, targs, _] in enumerate(test_bar): 
                     imgs = imgs.to(self.args.device)
                     targs = targs.to(self.args.device)
 
@@ -230,16 +224,16 @@ class SSL_HSIC(nn.Module):
                 return top1_accuracy, top5_accuracy
             
 class Fair_SSL_HSIC(SSL_HSIC):
-    """Fair SSL HSIC wrapper TODO"""
+    """Fair SSL HSIC wrapper"""
     def __init__(self, *args, **kwargs):
         super(Fair_SSL_HSIC, self).__init__(*args, **kwargs)
 
     def approximate_hsic_za(self, hidden, sens_att):
         return hsic_regular(hidden, sens_att)
     
-    def hsic_objective(self, z, z1, z2, batch_size, N, sens_att):
-        hsic_zy = self.approximate_hsic_zy(z, batch_size, N)
-        hsic_zz = self.approximate_hsic_zz(z1, z2)
+    def hsic_objective(self, z, z1, z2, batch_size, sens_att):
+        hsic_zy = self.approximate_hsic_zy(z, batch_size)
+        hsic_zz = self.approximate_hsic_zz(z, z)
         hsic_za = self.approximate_hsic_za(z1, sens_att)
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     

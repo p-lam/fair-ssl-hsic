@@ -72,9 +72,9 @@ class ColoredMNIST(datasets.VisionDataset):
     }
     
 
-    def __init__(self, root='data', env='train', binary=False, n_views=2, color_jitter=False, s=1):
+    def __init__(self, root='data', env='train', uniform=False, n_views=2, color_jitter=False, s=1):
         super(ColoredMNIST, self).__init__(root,)
-        self.prepare_colored_mnist(binary=binary)
+        self.prepare_colored_mnist(uniform=uniform)
         test_transform = t.Compose([    t.ToTensor(),
                                         t.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
@@ -96,7 +96,7 @@ class ColoredMNIST(datasets.VisionDataset):
         self.transform = train_transform if env == "train" else test_transform 
         self.n_views = n_views
         
-        if env in ['train','test']:
+        if env in ['train','test','val']:
             self.data_label_tuples = torch.load(os.path.join(self.root, 'ColoredMNIST', env) + '.pt')
         else:
             raise RuntimeError(f'{env} env unknown. Valid envs are train, test')
@@ -107,64 +107,57 @@ class ColoredMNIST(datasets.VisionDataset):
         imgs = [self.transform(img) for _ in range(self.n_views)]
         if self.n_views == 1:
             imgs = imgs[0]
-        return imgs, label, color, index 
+        return imgs, label, color
 
     def __len__(self):
         return len(self.data_label_tuples)
 
-    def prepare_colored_mnist(self, binary=False):
+    def prepare_colored_mnist(self, uniform=True):
+        # get data directory
         colored_mnist_dir = os.path.join(self.root, 'ColoredMNIST')
+
+        # check if cmnist already exists
         if os.path.exists(os.path.join(colored_mnist_dir, 'train.pt')) \
             and os.path.exists(os.path.join(colored_mnist_dir, 'test.pt')):
             print('Colored MNIST dataset already exists')
             return
+        
+        # else, prepare cmnist 
         print('Preparing Colored MNIST')
         train_mnist = datasets.mnist.MNIST(self.root, train=True, download=True)
-        train_set, test_set = [], []
+        val_size = ceil(0.16 * len(train_mnist))
+        train_size = len(train_mnist) - val_size
+        train_dataset, val_dataset = torch.utils.data.random_split(train_mnist, [train_size, val_size])
+        test_dataset = datasets.MNIST(self.root, train=False)
+        train_set, val_set, test_set = [], [], []
 
-        if binary: # same as IRM experiment code
-            for idx, (im, label) in enumerate(train_mnist):
-                if idx % 10000 == 0:
-                    print(f'Converting image {idx}/{len(train_mnist)}')
-                im_array = np.array(im)
-
-                # Assign a binary label y to the image based on the digit
-                binary_label = 0 if label < 5 else 1
-
-                # Flip label with 25% probability
-                if np.random.uniform() < 0.25:
-                    binary_label = binary_label ^ 1
-
-                # Color the image either red or green according to its possibly flipped label
-                color_red = binary_label == 0
-
-                # Flip the color with a probability
-                if idx < 40000:
-                    if np.random.uniform() < 0.2:
-                        color_red = not color_red
-                else: # this isn't used
-                    if np.random.uniform() < 0.9:
-                        color_red = not color_red
-
-                if idx < 40000:
-                    colored_arr = color_grayscale_arr(im_array, red=color_red)
-                    train_set.append([Image.fromarray(colored_arr), label, int(color_red)])
-                else:
-                    colored_arr = multicolor_grayscale_arr(im_array)
-                    test_set.append([Image.fromarray(colored_arr), label, int(color_red)])
-        else: 
-            for idx, (im, label) in enumerate(train_mnist):
-                im_array = np.array(im)
-                if idx < 40000: 
+        # build train dataset
+        for idx, (im, label) in enumerate(train_dataset):
+            im_array = np.array(im)
+            if uniform: 
+                colored_arr, color = multicolor_grayscale_arr(im_array, target=label)
+                train_set.append([Image.fromarray(colored_arr), label, color / 255.0 ])
+            else: 
+                if np.random.uniform() < 0.3:
                     colored_arr, color = multicolor_grayscale_arr(im_array, target=label)
                     train_set.append([Image.fromarray(colored_arr), label, color / 255.0 ])
                 else: 
                     colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
-                    test_set.append([Image.fromarray(colored_arr), label, color / 255.0])
+                    train_set.append([Image.fromarray(colored_arr), label, color / 255.0])
+        
+        # build val and test datasets
+        for idx, (im, label) in enumerate(val_dataset): 
+            colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
+            val_set.append([Image.fromarray(colored_arr), label, color / 255.0])
+
+        for idx, (im, label) in enumerate(test_dataset): 
+            colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
+            val_set.append([Image.fromarray(colored_arr), label, color / 255.0])
 
         # save new data
         os.makedirs(colored_mnist_dir)
         torch.save(train_set, os.path.join(colored_mnist_dir, 'train.pt'))
+        torch.save(val_set, os.path.join(colored_mnist_dir, 'val.pt'))
         torch.save(test_set, os.path.join(colored_mnist_dir, 'test.pt'))
 
 def plot_dataset_digits(dataset, train=True):
@@ -187,18 +180,21 @@ def plot_dataset_digits(dataset, train=True):
         for row in range(rows):
             img, label, color = label_to_images[col][row]
             ax = axes[row, col] if rows == 3 else axes[col]
+            img = img.permute(1, 2, 0)
             ax.imshow(img, cmap='gray')  # Use cmap='gray' for MNIST images
             ax.axis('off')
             if row == 0:  # Only set title for the top row
                 ax.set_title(f"Label: {label}")
-
+    
     name = "mnist_train" if train else "mnist_test"
     plt.savefig(name, bbox_inches="tight")
     plt.show()
 
 if __name__ == '__main__':
     # test if dataset code is working / plot datasets
-    train_set = ColoredMNIST(root='data', env='train', binary=False)
-    test_set = ColoredMNIST(root='data', env='test', binary=False)
+    train_set = ColoredMNIST(root='data', env='train', n_views=1)
+    val_set = ColoredMNIST(root='data', env='val', n_views=1)
+    test_set = ColoredMNIST(root='data', env='test', n_views=1)
     plot_dataset_digits(train_set)
-    plot_dataset_digits(test_set, train=False)
+    plot_dataset_digits(val_set, train=False)
+    # plot_dataset_digits(test_set, train=False)
