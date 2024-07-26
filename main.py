@@ -65,7 +65,7 @@ def parse_args():
     parser.add_argument('--log_every_n_steps', default=10, type=int) 
     parser.add_argument('--fp16_precision', action='store_true') 
     parser.add_argument('--device', default="cuda" if torch.cuda.is_available() else "cpu", type=str) 
-    parser.add_argument("--wandb_name", default="train_1")
+    parser.add_argument("--wandb_name", default="train")
     # parse and return args
     args = parser.parse_args()
     return args

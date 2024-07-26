@@ -239,7 +239,7 @@ class Fair_SSL_HSIC(SSL_HSIC):
     
     def hsic_objective(self, z, z1, z2, batch_size, N, sens_att):
         hsic_zy = self.approximate_hsic_zy(z, batch_size, N)
-        hsic_zz = self.approximate_hsic_zz(z1, z2)
+        hsic_zz = self.approximate_hsic_zz(z, z)
         hsic_za = self.approximate_hsic_za(z1, sens_att)
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     
