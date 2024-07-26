@@ -72,7 +72,7 @@ class ColoredMNIST(datasets.VisionDataset):
     }
     
 
-    def __init__(self, root='data', env='train', uniform=False, n_views=2, color_jitter=False, s=1):
+    def __init__(self, root='data', env='train', uniform=True, n_views=2, color_jitter=False, s=1):
         super(ColoredMNIST, self).__init__(root,)
         self.prepare_colored_mnist(uniform=uniform)
         test_transform = t.Compose([    t.ToTensor(),
@@ -152,7 +152,7 @@ class ColoredMNIST(datasets.VisionDataset):
 
         for idx, (im, label) in enumerate(test_dataset): 
             colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
-            val_set.append([Image.fromarray(colored_arr), label, color / 255.0])
+            test_set.append([Image.fromarray(colored_arr), label, color / 255.0])
 
         # save new data
         os.makedirs(colored_mnist_dir)

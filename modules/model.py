@@ -67,7 +67,7 @@ class SSL_HSIC(nn.Module):
         hsic_zy = self.approximate_hsic_zy(z, batch_size)
         hsic_zz = self.approximate_hsic_zz(z, z)       
         if (torch.isnan(torch.sqrt(hsic_zz))):
-            print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted (?)")
+            print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted")
 
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) 
 
@@ -118,14 +118,14 @@ class SSL_HSIC(nn.Module):
 
             # linear evaluation for final epoch
             if epoch_counter == (self.args.epochs - 1):
-                top1_test, top5_test = self.evaluate(train_loader, test_loader, epoch_counter)
+                top1_test, top5_test = self.evaluate(train_loader, test_loader, linear_cls=True)
                 # log and print results
                 wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
                         "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
                         "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
                 print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Final Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
             else:  # otherwise just evaluate normally on validation set
-                top1_test, top5_test = self.evaluate(train_loader, val_loader, epoch_counter) 
+                top1_test, top5_test = self.evaluate(train_loader, val_loader, linear_cls=False) 
                 # log and print results
                 wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
                         "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
@@ -194,13 +194,13 @@ class SSL_HSIC(nn.Module):
                     scaler.update()
                 schedule_fc.step()
 
-    def evaluate(self, train_loader, test_loader, epoch):
+    def evaluate(self, train_loader, test_loader, linear_cls=False):
         """
         test using a linear classifier on top of backbone features
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        if epoch == (self.args.epochs - 1):
+        if linear_cls:
             self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
@@ -212,7 +212,7 @@ class SSL_HSIC(nn.Module):
                     targs = targs.to(self.args.device)
 
                     _, _, logits = self.model(imgs)
-                    loss = self.criterion(logits, targs)
+                    # loss = self.criterion(logits, targs)
 
                     top1, top5 = accuracy(logits, targs, topk=(1,5))
                     total_num += targs.shape[0]
@@ -234,7 +234,9 @@ class Fair_SSL_HSIC(SSL_HSIC):
     def hsic_objective(self, z, z1, z2, batch_size, sens_att):
         hsic_zy = self.approximate_hsic_zy(z, batch_size)
         hsic_zz = self.approximate_hsic_zz(z, z)
-        hsic_za = self.approximate_hsic_za(z1, sens_att.unsqueeze(1))
+        if sens_att.dim() == 1: 
+            sens_att = sens_att.unsqueeze(1)
+        hsic_za = self.approximate_hsic_za(z1, sens_att)
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     
 class Model(nn.Module):
@@ -258,8 +260,8 @@ class Model(nn.Module):
         # encoder
         self.f = nn.Sequential(*self.f)
         # projection head
-        if len(feature_dim) == 1:  # linear+relu projection 
-            self.g = nn.Sequential(nn.Linear(512, feature_dim[0], bias=False), nn.ReLU())
+        if isinstance(feature_dim, int):  # linear+relu projection 
+            self.g = nn.Sequential(nn.Linear(512, feature_dim, bias=False), nn.ReLU())
         else:  # two hidden layer mlp
             self.g = nn.Sequential(nn.Linear(512, feature_dim[0], bias=False), nn.ReLU(), nn.Linear(feature_dim[0], feature_dim[1], bias=False), nn.ReLU())
         self.fc = nn.Linear(512, num_classes)

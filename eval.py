@@ -48,23 +48,15 @@ def parse_args():
     parser.add_argument('--wd', default=1e-6, type=float, metavar='W', help='weight decay')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
-    parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
-    parser.add_argument('--start_epoch', default=1, type=int, help='Starting epoch')
-    parser.add_argument('--lamb', default=2, type=float, help='Regularization Coefficient')
-    parser.add_argument('--gamma', default=3, type=float, help='Regularization Coefficient')
-    parser.add_argument('--hsic_type', default='regular', type=str, help='type of hsic approx: regular, normalized, normalized cca') 
     parser.add_argument('--n_views', default=2, type=int, help="number of augmentations for simclr/ssl") 
-    parser.add_argument('--temperature', default=0.07, type=float, help="contrastive temperature") 
-    parser.add_argument('--color_jitter', action='store_true')
     parser.add_argument('--small_net', action='store_true')
+    parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
     # misc arguments
-    parser.add_argument('--bn_splits', default=8, type=int, help='simulate multi-gpu behavior of BatchNorm in one gpu; 1 is SyncBatchNorm in multi-gpu')
     parser.add_argument('--results-dir', default='./results', type=str, metavar='PATH', help='path to cache (default: none)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')   
-    parser.add_argument('--log_every_n_steps', default=10, type=int) 
     parser.add_argument('--fp16_precision', action='store_true') 
     parser.add_argument('--device', default="cuda" if torch.cuda.is_available() else "cpu", type=str) 
-    parser.add_argument("--wandb_name", default="train_1")
+    parser.add_argument("--wandb_name", default="eval")
     # parse and return args
     args = parser.parse_args()
     return args
@@ -80,7 +72,7 @@ def main(config=None):
     args_dict = deepcopy(vars(args)) 
     print(f"Saving to wandb under run name: {args.wandb_name}")
     wandb.init(
-        project="Fair-SSL-HSIC-Sweeps",
+        project="Eval",
         name=f"{args.wandb_name}" if args.wandb_name is not None else None,
         config=args_dict
     )
@@ -91,7 +83,7 @@ def main(config=None):
         args.feature_dim = [256, 128]
     elif args.dataset == "cmnist": 
         dataset_type = ColoredMNIST 
-        train_dataset = dataset_type(root='data', env='train', n_views=args.n_views, color_jitter=args.color_jitter)
+        train_dataset = dataset_type(root='data', env='train', n_views=args.n_views)
         val_dataset = dataset_type(root='data', env='val', n_views=1)
         test_dataset = dataset_type(root='data', env='test', n_views=1) 
     elif args.dataset == "dsprites":
@@ -126,21 +118,13 @@ def main(config=None):
         # training loop 
         if args.model != "supervised":
             net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-            net.train(train_loader, test_loader, val_loader)
+            top1_test, top5_test = net.evaluate(train_loader, test_loader, linear_cls=True)
+            wandb.log({"test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
+            print(f"[Final Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
         else:
             # supervised baseline
-            for epoch in range(args.epochs):
-                loss, top1_train, top5_train = train(model, args, epoch, train_loader, criterion, optimizer, scheduler)
-                top1_test, top5_test = test(model, args, test_loader)
-                # log results
-                wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
-                            "train_loss": loss.item(), "lr": scheduler.get_last_lr()[0], 
-                            "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
-                # print
-                print(f"[Epoch {epoch}/{args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
-                # save model
-                torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, args.results_dir + '/model_last.pth')
-        
+            print("Not implemented!")
+
         # dump args
         with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
             args = vars(args)
@@ -150,61 +134,5 @@ def main(config=None):
                 pass
             json.dump(args, indent=4, fp=fp)
 
-def train(net, args, epoch, train_loader, criterion, optimizer, scheduler):
-    """
-    supervised training (to delete)
-    """
-    net.train()
-    scaler = GradScaler(enabled=args.fp16_precision)
-    n_iter, train_bar = 0, tqdm(train_loader)
-    for images, targets, _, _ in train_bar:
-        images = images.to(args.device)
-        targets = targets.to(args.device)
-        features, mlp_features, logits = net(images)
-        loss = criterion(logits, targets)
-
-        optimizer.zero_grad()
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update() 
-
-        if n_iter % args.log_every_n_steps == 0:
-            top1_train, top5_train = accuracy(logits, targets, topk=(1, 5))
-            train_bar.set_description('Train Epoch: [{}/{}], lr: {:.6f}, Loss: {:.4f}, Acc1: {:.4f}'.format(
-                                        epoch, 
-                                        args.epochs, 
-                                        scheduler.get_last_lr()[0],
-                                        loss.item(), 
-                                        top1_train.item()
-                                    ))
-        n_iter += 1
-    
-    # warmup for the first 10 epochs
-    if epoch >= 10:
-        scheduler.step() 
-
-    return loss, top1_train, top5_train
-
-def test(net, args, test_loader):
-    """
-    supervised testing (to delete)
-    """
-    net.eval()
-    total_num, top1_acc, top5_acc = 0.0, 0.0, 0.0
-    test_bar = tqdm(test_loader)
-    with torch.no_grad():
-        for counter, [imgs, targs, _, _] in enumerate(test_bar):
-            imgs = imgs.to(args.device)
-            targs = targs.to(args.device)
-            _, _, logits = net(imgs)
-            top1, top5 = accuracy(logits, targs, topk=(1,5))
-            total_num += targs.shape[0]
-            top1_acc += top1[0]
-            top5_acc += top5[0]
-            test_bar.set_description('Testing: ')
-        top1_acc /= (counter + 1)
-        top5_acc /= (counter + 1)
-        return top1_acc, top5_acc 
-    
 if __name__ == '__main__':
     main()
