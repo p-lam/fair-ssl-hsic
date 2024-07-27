@@ -147,10 +147,12 @@ class ColoredMNIST(datasets.VisionDataset):
         
         # build val and test datasets
         for idx, (im, label) in enumerate(val_dataset): 
+            im_array = np.array(im)
             colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
             val_set.append([Image.fromarray(colored_arr), label, color / 255.0])
 
         for idx, (im, label) in enumerate(test_dataset): 
+            im_array = np.array(im)
             colored_arr, color = multicolor_grayscale_arr(im_array, target=None)
             test_set.append([Image.fromarray(colored_arr), label, color / 255.0])
 
@@ -197,4 +199,5 @@ if __name__ == '__main__':
     test_set = ColoredMNIST(root='data', env='test', n_views=1)
     plot_dataset_digits(train_set)
     plot_dataset_digits(val_set, train=False)
+    plot_dataset_digits(test_set, train=False)
     # plot_dataset_digits(test_set, train=False)

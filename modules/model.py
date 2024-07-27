@@ -118,14 +118,14 @@ class SSL_HSIC(nn.Module):
 
             # linear evaluation for final epoch
             if epoch_counter == (self.args.epochs - 1):
-                top1_test, top5_test = self.evaluate(train_loader, test_loader, linear_cls=True)
+                top1_test, top5_test = self.evaluate(train_loader, test_loader, epoch_counter)
                 # log and print results
                 wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
                         "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
                         "test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
                 print(f"[Epoch {epoch_counter}/{self.args.epochs}]\t [Train loss {loss:5f}] [Train Acc@1|5 {top1_train.item():2f}|{top5_train.item():2f}] [Final Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
             else:  # otherwise just evaluate normally on validation set
-                top1_test, top5_test = self.evaluate(train_loader, val_loader, linear_cls=False) 
+                top1_test, top5_test = self.evaluate(train_loader, val_loader, epoch_counter) 
                 # log and print results
                 wandb.log({"train_top1_acc": top1_train.item(), "train_top5_acc":top5_train.item(), 
                         "train_loss": loss.item(), "lr": self.scheduler.get_last_lr()[0], 
@@ -194,13 +194,13 @@ class SSL_HSIC(nn.Module):
                     scaler.update()
                 schedule_fc.step()
 
-    def evaluate(self, train_loader, test_loader, linear_cls=False):
+    def evaluate(self, train_loader, test_loader, epoch):
         """
         test using a linear classifier on top of backbone features
         """
         self.model.eval()
         total_num, top1_accuracy, top5_accuracy = 0.0, 0.0, 0.0
-        if linear_cls:
+        if epoch == (self.args.epochs - 1):
             self.fit_linear_classifier(train_loader)
         test_bar = tqdm(test_loader)
 
@@ -234,8 +234,6 @@ class Fair_SSL_HSIC(SSL_HSIC):
     def hsic_objective(self, z, z1, z2, batch_size, sens_att):
         hsic_zy = self.approximate_hsic_zy(z, batch_size)
         hsic_zz = self.approximate_hsic_zz(z, z)
-        if sens_att.dim() == 1: 
-            sens_att = sens_att.unsqueeze(1)
         hsic_za = self.approximate_hsic_za(z1, sens_att)
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     

@@ -38,7 +38,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train Fair SSL-HSIC')
     # dataset arguments
     parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba, dsprites)', choices=['cmnist', 'celeba', 'dsprites'])    
-    parser.add_argument("--data", help='path for loading data', default='data', type=str)
+    parser.add_argument("--data", help='path for loading dccata', default='data', type=str)
     # model arguments
     parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
     parser.add_argument('--model', default='simclr', type=str, help='Model to use', choices=['simclr','ssl-hsic','fair-ssl-hsic', 'supervised'])
@@ -84,17 +84,17 @@ def main(config=None):
     elif args.dataset == "cmnist": 
         dataset_type = ColoredMNIST 
         train_dataset = dataset_type(root='data', env='train', n_views=args.n_views)
-        val_dataset = dataset_type(root='data', env='val', n_views=1)
+        # val_dataset = dataset_type(root='data', env='val', n_views=1)
         test_dataset = dataset_type(root='data', env='test', n_views=1) 
     elif args.dataset == "dsprites":
         pass 
     
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) 
+    # val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) 
 
     # load model
-    model = Model(small=args.small_net, feature_dim=args.feature_dim).to(args.device)
+    model = Model(feature_dim=args.feature_dim).to(args.device)
 
     with wandb.init(config=config):
         config = wandb.config 
@@ -118,21 +118,12 @@ def main(config=None):
         # training loop 
         if args.model != "supervised":
             net = models[args.model](model=model, optimizer=optimizer, scheduler=scheduler, args=args)
-            top1_test, top5_test = net.evaluate(train_loader, test_loader, linear_cls=True)
+            top1_test, top5_test = net.evaluate(train_loader, test_loader, epoch=args.epochs - 1)
             wandb.log({"test_top1_acc": top1_test.item(), "test_top5_acc": top5_test.item()})
             print(f"[Final Test Acc@1|5 {top1_test.item():2f}|{top5_test.item():2f}]")
         else:
             # supervised baseline
             print("Not implemented!")
-
-        # dump args
-        with open(args.results_dir + '/' + args.wandb_name + ".json", 'w') as fp:
-            args = vars(args)
-            try:
-                del args["device"]
-            except:
-                pass
-            json.dump(args, indent=4, fp=fp)
 
 if __name__ == '__main__':
     main()

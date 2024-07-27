@@ -37,7 +37,7 @@ models = {"simclr": SimCLR,
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Fair SSL-HSIC')
     # dataset arguments
-    parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba, dsprites)', choices=['cmnist', 'celeba', 'dsprites'])    
+    parser.add_argument('--dataset', dest='dataset', default='cmnist', type=str, help='dataset (options: cmnist, celeba)', choices=['cmnist', 'celeba'])    
     parser.add_argument("--data", help='path for loading data', default='data', type=str)
     # model arguments
     parser.add_argument("--num_workers", help="number of workers", default=4, type=int)
@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument('-a', '--arch', default='resnet18', help='resnet architecture')
     # training args/hyperparameters
     parser.add_argument('--lr', '--learning-rate', default=0.3, type=float, metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--wd', default=1e-6, type=float, metavar='W', help='weight decay')
+    parser.add_argument('--wd', default=1e-4, type=float, metavar='W', help='weight decay')
     parser.add_argument('--feature_dim', default=64, type=int, help='Feature dim for latent vector')
     parser.add_argument('--batch_size', default=128, type=int, help='Number of images in each mini-batch')
     parser.add_argument('--epochs', default=100, type=int, help='Number of sweeps over the dataset to train')
@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument('--log_every_n_steps', default=10, type=int) 
     parser.add_argument('--fp16_precision', action='store_true') 
     parser.add_argument('--device', default="cuda" if torch.cuda.is_available() else "cpu", type=str) 
-    parser.add_argument("--wandb_name", default="train_1")
+    parser.add_argument("--wandb_name", default="train")
     # parse and return args
     args = parser.parse_args()
     return args
@@ -94,8 +94,6 @@ def main(config=None):
         train_dataset = dataset_type(root='data', env='train', n_views=args.n_views, color_jitter=args.color_jitter)
         val_dataset = dataset_type(root='data', env='val', n_views=1)
         test_dataset = dataset_type(root='data', env='test', n_views=1) 
-    elif args.dataset == "dsprites":
-        pass 
     
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
