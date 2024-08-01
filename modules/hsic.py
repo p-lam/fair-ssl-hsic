@@ -54,6 +54,10 @@ def distmat(X):
     D = torch.abs(D)
     return D
 
+def delta_kernel(y):
+    K = (y == y.T).float()  # Compare each element and convert boolean to float (0.0 or 1.0)
+    return K
+
 def kernelmat(X, sigma, k_type="gaussian"):
     """kernel matrix baker"""
     m = int(X.size()[0])
@@ -78,6 +82,9 @@ def kernelmat(X, sigma, k_type="gaussian"):
     ## Adding linear kernel
     elif k_type == "linear":
         Kx = torch.mm(X, X.T).type(torch.FloatTensor)
+    ## Discrete kernel
+    elif k_type == "discrete":
+        Kx = delta_kernel(X).type(torch.FloatTensor)
 
     Kxc = torch.mm(Kx,H)
 
@@ -155,7 +162,7 @@ def hsic_regular(x, y, sigma=None, use_cuda=True, to_numpy=False, k_type_y='gaus
     """
     """
     Kxc = kernelmat(x, sigma)
-    Kyc = kernelmat(y, sigma)
+    Kyc = kernelmat(y, sigma, k_type=k_type_y)
     KtK = torch.mul(Kxc, Kyc.t())
     Pxy = torch.trace(Kxc @ Kyc) / ((x.size(0) - 1) ** 2)
 

@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import os 
+import pandas as pd
 import wandb
 from tqdm import tqdm
 from torch import nn
@@ -9,7 +10,6 @@ from modules.hsic import *
 from functools import partial 
 from torchvision.models import resnet18
 from torch.cuda.amp import GradScaler, autocast
-import time
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from utils import accuracy, save_checkpoint
 
@@ -63,11 +63,11 @@ class SSL_HSIC(nn.Module):
             print("this is nan")
         return hsic_regular(z1, z2)
 
-    def hsic_objective(self, z, z1, z2, batch_size, sens_att=None):
+    def hsic_objective(self, z, batch_size, sens_att=None):
         hsic_zy = self.approximate_hsic_zy(z, batch_size)
-        hsic_zz = self.approximate_hsic_zz(z, z)       
-        if (torch.isnan(torch.sqrt(hsic_zz))):
-            print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted")
+        hsic_zz = self.approximate_hsic_zz(z, z) 
+        # if (torch.isnan(torch.sqrt(hsic_zz))):
+        #     print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted")
 
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) 
 
@@ -87,28 +87,29 @@ class SSL_HSIC(nn.Module):
                 targets = targets.to(self.args.device)
           
                 with autocast(enabled=self.args.fp16_precision):
-                    z1, mlp_feats1, logits1 = self.model(im1)
-                    z2, mlp_feats2, logits2 = self.model(im2) 
+                    # z1, mlp_feats1, logits1 = self.model(im1)
+                    # z2, mlp_feats2, logits2 = self.model(im2) 
                     z, mlp_feats, logits = self.model(images)
 
-                    feat_1, proj_1 = self.l2_norm(mlp_feats1), self.l2_norm(logits1)
-                    feat_2, proj_2 = self.l2_norm(mlp_feats2), self.l2_norm(logits2)
+                    # feat_1, proj_1 = self.l2_norm(mlp_feats1), self.l2_norm(logits1)
+                    # feat_2, proj_2 = self.l2_norm(mlp_feats2), self.l2_norm(logits2)
                     feat, proj = self.l2_norm(mlp_feats), self.l2_norm(logits)
 
                     # t1 = time.time()
-                    loss = self.hsic_objective(feat, feat_1, feat_2, self.args.batch_size, sens_att=sens_att)
+                    loss = self.hsic_objective(feat, self.args.batch_size, sens_att=sens_att)
                     
-                    if torch.isnan(loss):
-                        wandb.alert(title='Nan loss', text='Loss is NaN')     # Will alert you via email or slack that your metric has reached NaN
-                        raise Exception(f'Loss is NaN') # This could be exchanged for exit(1) if you do not want a traceback
-                    # print(f"Objective took {time.time() - t1} to evaluate")
+                    # if torch.isnan(loss):
+                    #     wandb.alert(title='Nan loss', text='Loss is NaN')     # Will alert you via email or slack that your metric has reached NaN
+                    #     raise Exception(f'Loss is NaN') # This could be exchanged for exit(1) if you do not want a traceback
+                    # # print(f"Objective took {time.time() - t1} to evaluate")
                         
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
                 if n_iter % self.args.log_every_n_steps == 0:
-                    top1_train, top5_train = accuracy(logits1, targets, topk=(1, 5))
+                    topk = (1,1) if self.args.dataset == "celeba" else (1,5)
+                    top1_train, top5_train = accuracy(logits[:len(logits)//2], targets, topk=topk)
                     train_bar.set_description(f'[Training Epoch {epoch_counter}]')
                 n_iter += 1
 
@@ -179,7 +180,7 @@ class SSL_HSIC(nn.Module):
 
         else:
             for epoch in tqdm(range(FINETUNE_EPOCHS)):
-                for images, targets, _, _ in train_loader:
+                for images, targets, _ in train_loader:
                     images = images[0]
                     images = images.to(self.args.device)
                     targets = targets.to(self.args.device)
@@ -214,7 +215,8 @@ class SSL_HSIC(nn.Module):
                     _, _, logits = self.model(imgs)
                     # loss = self.criterion(logits, targs)
 
-                    top1, top5 = accuracy(logits, targs, topk=(1,5))
+                    topk = (1,1) if self.args.dataset == "celeba" else (1,5)
+                    top1, top5 = accuracy(logits, targs, topk=topk)
                     total_num += targs.shape[0]
                     top1_accuracy += top1[0]
                     top5_accuracy += top5[0]
@@ -222,19 +224,97 @@ class SSL_HSIC(nn.Module):
                 top1_accuracy /= (counter + 1)
                 top5_accuracy /= (counter + 1)
                 return top1_accuracy, top5_accuracy
-            
+    
+    def build_confusion_matrix(self, actual, pred):
+        confusion = pd.crosstab(actual, pred, rownames=['Actual'], colnames=['Predicted'])
+        try:
+            TP = confusion.loc[1,1] + 1
+        except KeyError:
+            TP = 1
+        try:
+            TN = confusion.loc[0,0] + 1
+        except KeyError:
+            TN = 1
+        try:
+            FP = confusion.loc[0,1] + 1
+        except KeyError:
+            FP = 1
+        try:
+            FN = confusion.loc[1,0] + 1
+        except KeyError:
+            FN = 1
+
+        out = {}
+        out['ALL'] = (TP+TN+FP+FN-4)
+        out['DP'] = (TP+FP-2)/(TP+TN+FP+FN-4)
+        out['TPR'] =  (TP-1)/(TP+FN-2)
+        out['TNR'] = (TN-1)/(FP+TN-2)
+        out['FPR'] = (FP-1)/(FP+TN-2)
+        out['FNR'] = (FN-1)/(TP+FN-2)
+        out['ACR'] = (TP+TN-2)/(TP+TN+FP+FN-4)
+
+        return out
+    
+    def evaluate_fairness(self, test_loader, test_length):
+        """
+        evaluate for disparate impact / equalized odds
+        """
+        self.model.eval()
+        running_corrects = 0
+        test_bar = tqdm(test_loader)
+        
+        # calculate accuracy
+        with torch.no_grad():
+            with autocast(enabled=self.args.fp16_precision):
+                for counter, [imgs, targs, sens] in enumerate(test_bar): 
+                    imgs = imgs.to(self.args.device)
+                    targs = targs.to(self.args.device)
+
+                    _, _, logits = self.model(imgs)
+                    _, preds = torch.max(logits, 1)
+
+                    running_corrects += torch.sum(preds == targs)
+                    test_bar.set_description('Fairness testing: ')
+                epoch_acc = running_corrects / test_length * 100
+                idx_b = np.where(sens==1)
+                y_b = targs[[idx_b]]
+                pred_b = logits[[idx_b]]
+                pred_b = torch.squeeze(pred_b,0).data.max(1, keepdim=True)[1]
+                idx_w = np.where(sens==0)
+                y_w = targs[[idx_w]]
+                pred_w = logits[[idx_w]]
+                pred_w = torch.squeeze(pred_w,0).data.max(1, keepdim=True)[1]
+        
+        w = self.build_confusion_matrix(torch.squeeze(y_w,0).cpu(), pred_w.detach().cpu().numpy().reshape(pred_w.shape[0]))
+        b = self.build_confusion_matrix(torch.squeeze(y_b,0).cpu(), pred_b.detach().cpu().numpy().reshape(pred_b.shape[0]))
+
+        DI1 = 100 * abs(w['DP'] - b['DP'])
+        DFPR1 = 100 * abs(w['TNR'] - b['TNR'])
+        DFNR1 = 100 * abs(w['TPR'] - b['TPR'])
+        w_TNR  = 100 * w['TNR']
+        w_TPR  = 100 * w['TPR']
+        b_TNR  = 100 * b['TNR']
+        b_TPR  = 100 * b['TPR']
+
+        print(f'Disparate impact is {DI1}%, eod is {DFPR1+DFNR1}%.')
+
+
 class Fair_SSL_HSIC(SSL_HSIC):
     """Fair SSL HSIC wrapper"""
     def __init__(self, *args, **kwargs):
         super(Fair_SSL_HSIC, self).__init__(*args, **kwargs)
 
-    def approximate_hsic_za(self, hidden, sens_att):
-        return hsic_regular(hidden, sens_att)
+    def approximate_hsic_za(self, hidden, sens_att, k_type_y="gaussian"):
+        return hsic_regular(hidden, sens_att, k_type_y=k_type_y)
     
-    def hsic_objective(self, z, z1, z2, batch_size, sens_att):
+    def hsic_objective(self, z, batch_size, sens_att):
         hsic_zy = self.approximate_hsic_zy(z, batch_size)
         hsic_zz = self.approximate_hsic_zz(z, z)
-        hsic_za = self.approximate_hsic_za(z1, sens_att)
+        if sens_att.dim() == 1: 
+            sens_att = sens_att.unsqueeze(1)
+        hsic_za = self.approximate_hsic_za(z[:len(z)//2], sens_att)
+        if (torch.isnan(torch.sqrt(hsic_zz))):
+            print(f"hsic_zz: {hsic_zz} is negative and cannot be square-rooted")
         return -hsic_zy + self.args.gamma*torch.sqrt(hsic_zz) + self.args.lamb*hsic_za
     
 class Model(nn.Module):
